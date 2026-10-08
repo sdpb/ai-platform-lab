@@ -1,13 +1,18 @@
 # ADR 001 — Build once; evaluate replacement before acceptance
 
-Status: starter decision, available for trainee review.
+Status: accepted
 
-**Constraints:** local Docker, one application image, no registry or cluster prerequisite, reproducible failure demonstration.
+**Constraints:** Amazon ECR for artifacts, AWS IAM OIDC for identity, separate build and deployment boundaries, reproducible failure demonstration.
 
-**Decision:** build the Python image once, reuse its immutable local ID across environments, and gate a replacement using a comparable 1,000-request workload. Restore the previous ID and verify a transaction if the gate fails. Serialize releases per environment.
+**Decision:**
 
-**Alternatives:** rebuild per environment (loses artifact identity), rolling replacement (requires multiple instances and routing), canary (also requires traffic allocation and sufficient observations).
+- **Workflows:** The CI pipeline is explicitly split into `pr.yml` and `release.yml` using a shared `test.yml`. This guarantees untrusted pull requests can never execute within a deployment environment or access AWS credentials.
+- **Artifacts:** Build the Python image once, push it to Amazon ECR, and deploy the immutable digest across environments.
+- **Identity:** Utilize AWS IAM roles via GitHub Actions OIDC federation. Separate roles are provisioned for CI (`AWS_BUILD_OIDC_ROLE_ARN`) and CD (`AWS_DEPLOY_OIDC_ROLE_ARN`) to strictly scope permissions.
+- **Provenance:** Generate build attestations using `actions/attest-build-provenance` against the ECR image digest, and verify it prior to running deployments.
 
-**Consequences:** the reference works locally and makes release rejection observable, but replacement causes a service gap. Local identity is not signed provenance. Hosted attestations, OIDC, policy, and rolling deployment are trainee work.
+**Alternatives:** local image IDs (loses cross-environment persistence and signed provenance), single shared AWS credential (violates principle of least privilege), monolithic workflow (risks exposing secrets to untrusted PRs).
 
-**Evidence to attach:** baseline/candidate reports, rejected release report, recovered transaction, environment image IDs. **Trainee decision:** which deployment strategy fits the client constraints, and what proves an artifact is trusted?
+**Consequences:** The pipeline now strictly separates untrusted code (PRs) from deployment environments. Artifacts are cryptographically signed and stored in a remote registry (ECR). The rollout still uses local instance replacement (to be upgraded to rolling deployment in later weeks).
+
+**Evidence to attach:** baseline/candidate reports, rejected release report, recovered transaction, ECR image URIs, successful attestation checks.

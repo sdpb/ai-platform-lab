@@ -12,3 +12,6 @@ evidence/*
 *.tfstate*
 *.tfplan
 .DS_Store
+.agents/
+skills-lock.json
+localdocs/
