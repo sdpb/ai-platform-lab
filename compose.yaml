@@ -1,0 +1,151 @@
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: "3"
+
+x-app: &app
+  image: ${APP_IMAGE:-orderlab:local}
+  pull_policy: never
+  init: true
+  read_only: true
+  tmpfs: [/tmp]
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  stop_grace_period: 25s
+  environment: &env
+    DATABASE_URL: postgresql://lab:${POSTGRES_PASSWORD:?Run python3 scripts/lab.py init}@db:5432/orders
+    LAB_ADMIN_TOKEN: ${LAB_ADMIN_TOKEN:?Run python3 scripts/lab.py init}
+    OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
+    APP_VERSION: ${APP_VERSION:-local}
+    DB_POOL_SIZE: ${DB_POOL_SIZE:-8}
+    DEPENDENCY_TIMEOUT: ${DEPENDENCY_TIMEOUT:-0.4}
+    DEPENDENCY_ATTEMPTS: ${DEPENDENCY_ATTEMPTS:-3}
+  mem_limit: 384m
+  cpus: 1.0
+  logging: *logging
+
+services:
+  db:
+    logging: *logging
+    image: postgres:17-alpine@sha256:18cfe3ef5e6815560c98237d6216d1e5119702fb0f3894c8785dd58b8bbe5d73
+    environment:
+      POSTGRES_DB: orders
+      POSTGRES_USER: lab
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Run python3 scripts/lab.py init}
+    volumes: [db-data:/var/lib/postgresql/data]
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U lab -d orders]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    mem_limit: 512m
+  migrate:
+    <<: *app
+    command: [python, scripts/migrate.py]
+    depends_on:
+      db: {condition: service_healthy}
+  api:
+    <<: *app
+    build: .
+    environment:
+      <<: *env
+      PAYMENTS_URL: http://payments:8000
+      STARTUP_DELAY_SECONDS: ${STARTUP_DELAY_SECONDS:-0}
+    ports: ["127.0.0.1:${API_PORT:-8000}:8000"]
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      payments: {condition: service_healthy}
+    healthcheck: &api-health
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/ready', timeout=2)"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+  payments:
+    <<: *app
+    command: [uvicorn, "orderlab.payments:app", --host, "0.0.0.0", --port, "8000", --workers, "1", --no-access-log]
+    ports: ["127.0.0.1:${STUB_PORT:-8001}:8000"]
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+    healthcheck: *api-health
+  prometheus:
+    logging: *logging
+    image: prom/prometheus:v3.5.0
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.retention.time=24h"]
+    ports: ["127.0.0.1:${PROMETHEUS_PORT:-9090}:9090"]
+    volumes:
+      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./observability/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus-data:/prometheus
+    mem_limit: 384m
+  jaeger:
+    logging: *logging
+    image: cr.jaegertracing.io/jaegertracing/jaeger:2.20.0
+    ports: ["127.0.0.1:${JAEGER_PORT:-16686}:16686"]
+    mem_limit: 384m
+  grafana:
+    logging: *logging
+    image: grafana/grafana:12.1.1
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:?Run python3 scripts/lab.py init}
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+    ports: ["127.0.0.1:${GRAFANA_PORT:-3000}:3000"]
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboard.json:/var/lib/grafana/dashboards/orders.json:ro
+      - grafana-data:/var/lib/grafana
+    mem_limit: 384m
+  tests:
+    <<: *app
+    profiles: [tools]
+    command: [pytest, -q, -p, "no:cacheprovider"]
+    environment:
+      <<: *env
+      API_URL: http://api:8000
+      STUB_URL: http://payments:8000
+    depends_on:
+      api: {condition: service_healthy}
+  restore-db:
+    logging: *logging
+    image: postgres:17-alpine@sha256:18cfe3ef5e6815560c98237d6216d1e5119702fb0f3894c8785dd58b8bbe5d73
+    profiles: [recovery]
+    environment:
+      POSTGRES_DB: orders
+      POSTGRES_USER: lab
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Run init}
+    volumes: [restore-data:/var/lib/postgresql/data]
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U lab -d orders]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+  restore-payments:
+    <<: *app
+    profiles: [recovery]
+    command: [uvicorn, "orderlab.payments:app", --host, "0.0.0.0", --port, "8000", --no-access-log]
+    environment:
+      <<: *env
+      DATABASE_URL: postgresql://lab:${POSTGRES_PASSWORD}@restore-db:5432/orders
+    depends_on:
+      restore-db: {condition: service_healthy}
+    healthcheck: *api-health
+  restore-api:
+    <<: *app
+    profiles: [recovery]
+    ports: ["127.0.0.1:${RESTORE_API_PORT:-8100}:8000"]
+    environment:
+      <<: *env
+      DATABASE_URL: postgresql://lab:${POSTGRES_PASSWORD}@restore-db:5432/orders
+      PAYMENTS_URL: http://restore-payments:8000
+    depends_on:
+      restore-payments: {condition: service_healthy}
+    healthcheck: *api-health
+
+volumes:
+  db-data:
+  restore-data:
+  prometheus-data:
+  grafana-data:

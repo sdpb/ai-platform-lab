@@ -1,0 +1,3 @@
+# Deliberately faulty training artifact. Never used by the normal Compose build.
+FROM orderlab:local
+ENV INITIAL_FAIL_EVERY=5

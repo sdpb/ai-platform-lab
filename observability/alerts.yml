@@ -1,0 +1,38 @@
+groups:
+  - name: orderlab
+    rules:
+      - record: orders:requests:rate5m
+        expr: sum(rate(orderlab_requests_total{service="orders-api",route="/orders",method="POST",status=~"2..|5.."}[5m]))
+      - record: orders:errors:ratio5m
+        expr: (sum(rate(orderlab_requests_total{service="orders-api",route="/orders",method="POST",status=~"5.."}[5m])) or vector(0)) / orders:requests:rate5m
+      - alert: OrdersFastBurn
+        expr: |
+          (
+            (sum(rate(orderlab_requests_total{service="orders-api",route="/orders",method="POST",status=~"5.."}[1h])) / sum(rate(orderlab_requests_total{service="orders-api",route="/orders",method="POST",status=~"2..|5.."}[1h]))) > 0.0144
+          ) and (
+            orders:errors:ratio5m > 0.0144
+          ) and (
+            sum(increase(orderlab_requests_total{service="orders-api",route="/orders",method="POST",status=~"2..|5.."}[1h])) >= 1000
+          )
+        for: 1m
+        labels: {severity: page}
+        annotations:
+          summary: Orders are consuming the error budget rapidly
+      - alert: OrdersTelemetryMissing
+        expr: up{job="orders"} == 0 or absent(up{job="orders"})
+        for: 1m
+        labels: {severity: warning}
+        annotations:
+          summary: Orders metrics cannot be scraped
+      - alert: OrdersTrafficTooLow
+        expr: sum(increase(orderlab_requests_total{service="orders-api",route="/orders",method="POST",status=~"2..|5.."}[1h])) < 1000
+        for: 5m
+        labels: {severity: info}
+        annotations:
+          summary: Too few requests to evaluate the lab SLO confidently
+      - alert: OrdersRequestMetricsMissing
+        expr: absent(orderlab_requests_total{service="orders-api",route="/orders",method="POST"})
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: Order request metrics are absent; SLO status is unknown

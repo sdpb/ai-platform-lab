@@ -1,0 +1,32 @@
+name: OrderLab checks
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+concurrency:
+  group: orderlab-checks-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  local-stack:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Initialize isolated CI configuration
+        run: python3 scripts/lab.py init
+      - name: Build and start
+        run: python3 scripts/lab.py up
+      - name: Lint
+        run: docker compose run --rm --no-deps tests ruff check --no-cache src scripts tests
+      - name: Integration and gate tests
+        run: python3 scripts/lab.py test
+      - name: Alert fixtures
+        run: docker compose run --rm --no-deps -v "$PWD/observability:/rules:ro" --entrypoint promtool prometheus test rules /rules/alerts.test.yml
+      - name: Restore drill
+        run: |
+          archive=$(python3 scripts/lab.py backup)
+          python3 scripts/lab.py restore "$archive"
+      - name: Cleanup
+        if: always()
+        run: docker compose --profile recovery down -v

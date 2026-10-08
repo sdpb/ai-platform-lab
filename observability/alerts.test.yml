@@ -1,0 +1,78 @@
+rule_files: [alerts.yml]
+evaluation_interval: 1m
+tests:
+  - name: normal traffic does not page
+    interval: 1m
+    input_series:
+      - series: 'orderlab_requests_total{service="orders-api",route="/orders",method="POST",status="201"}'
+        values: '0+1000x120'
+      - series: 'up{job="orders",instance="api:8000"}'
+        values: '1+0x120'
+    alert_rule_test:
+      - eval_time: 90m
+        alertname: OrdersFastBurn
+        exp_alerts: []
+  - name: sustained 2 percent errors page
+    interval: 1m
+    input_series:
+      - series: 'orderlab_requests_total{service="orders-api",route="/orders",method="POST",status="201"}'
+        values: '0+980x120'
+      - series: 'orderlab_requests_total{service="orders-api",route="/orders",method="POST",status="503"}'
+        values: '0+20x120'
+    alert_rule_test:
+      - eval_time: 90m
+        alertname: OrdersFastBurn
+        exp_alerts:
+          - exp_labels: {severity: page}
+            exp_annotations:
+              summary: Orders are consuming the error budget rapidly
+  - name: short error spike does not meet the long window
+    interval: 1m
+    input_series:
+      - series: 'orderlab_requests_total{service="orders-api",route="/orders",method="POST",status="201"}'
+        values: '0+1000x59 59900 60900 61900'
+      - series: 'orderlab_requests_total{service="orders-api",route="/orders",method="POST",status="503"}'
+        values: '0+0x59 100 100 100'
+    alert_rule_test:
+      - eval_time: 62m
+        alertname: OrdersFastBurn
+        exp_alerts: []
+  - name: low traffic errors are inconclusive not a burn page
+    interval: 1m
+    input_series:
+      - series: 'orderlab_requests_total{service="orders-api",route="/orders",method="POST",status="503"}'
+        values: '0+1x120'
+    alert_rule_test:
+      - eval_time: 90m
+        alertname: OrdersFastBurn
+        exp_alerts: []
+      - eval_time: 90m
+        alertname: OrdersTrafficTooLow
+        exp_alerts:
+          - exp_labels: {severity: info}
+            exp_annotations:
+              summary: Too few requests to evaluate the lab SLO confidently
+  - name: scrape failure is separately visible
+    interval: 1m
+    input_series:
+      - series: 'up{job="orders",instance="api:8000"}'
+        values: '0+0x10'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: OrdersTelemetryMissing
+        exp_alerts:
+          - exp_labels: {severity: warning, job: orders, instance: 'api:8000'}
+            exp_annotations:
+              summary: Orders metrics cannot be scraped
+  - name: completely absent request instrumentation is unknown
+    interval: 1m
+    input_series:
+      - series: 'up{job="orders",instance="api:8000"}'
+        values: '1+0x10'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: OrdersRequestMetricsMissing
+        exp_alerts:
+          - exp_labels: {severity: warning, service: orders-api, route: /orders, method: POST}
+            exp_annotations:
+              summary: Order request metrics are absent; SLO status is unknown
