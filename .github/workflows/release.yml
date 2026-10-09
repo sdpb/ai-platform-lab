@@ -1,0 +1,134 @@
+name: Release Pipeline
+on:
+  push:
+    branches: [ "main" ]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    uses: ./.github/workflows/test.yml
+
+  build-and-push:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write      # Required for OIDC
+      attestations: write  # Required for generating provenance
+    outputs:
+      image-digest: ${{ steps.build-image.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials for Build
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_BUILD_OIDC_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build, tag, and push image to Amazon ECR
+        id: build-image
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          IMAGE_URI=$ECR_REGISTRY/$ECR_REPOSITORY
+          docker build -t $IMAGE_URI:$IMAGE_TAG .
+          docker push $IMAGE_URI:$IMAGE_TAG
+          DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' $IMAGE_URI:$IMAGE_TAG | cut -d'@' -f2)
+          echo "digest=$DIGEST" >> $GITHUB_OUTPUT
+
+      - name: Generate build attestation
+        uses: actions/attest-build-provenance@v1
+        with:
+          subject-name: ${{ steps.login-ecr.outputs.registry }}/${{ vars.ECR_REPOSITORY }}
+          subject-digest: ${{ steps.build-image.outputs.digest }}
+          push-to-registry: false
+
+  deploy-staging:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    environment: staging
+    concurrency: staging
+    permissions:
+      contents: read
+      id-token: write     # Required for OIDC
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Configure AWS credentials for Deploy
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_OIDC_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Verify build provenance
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+        run: |
+          gh attestation verify oci://$ECR_REGISTRY/$ECR_REPOSITORY@${{ needs.build-and-push.outputs.image-digest }} -o ${{ github.repository_owner }}
+
+      - name: Initialize environment
+        run: python3 scripts/lab.py init
+
+      - name: Deploy to Staging
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+        run: |
+          # Pull the image so `scripts/release.py` can inspect its ID locally
+          docker pull $ECR_REGISTRY/$ECR_REPOSITORY@${{ needs.build-and-push.outputs.image-digest }}
+          python3 scripts/release.py --candidate $ECR_REGISTRY/$ECR_REPOSITORY@${{ needs.build-and-push.outputs.image-digest }} --baseline evidence/baseline.json
+
+  deploy-production:
+    needs: deploy-staging
+    runs-on: ubuntu-latest
+    environment: production
+    concurrency: production
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Configure AWS credentials for Deploy
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_OIDC_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Verify build provenance
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+        run: |
+          gh attestation verify oci://$ECR_REGISTRY/$ECR_REPOSITORY@${{ needs.build-and-push.outputs.image-digest }} -o ${{ github.repository_owner }}
+
+      - name: Initialize environment
+        run: python3 scripts/lab.py init
+
+      - name: Deploy to Production
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+        run: |
+          docker pull $ECR_REGISTRY/$ECR_REPOSITORY@${{ needs.build-and-push.outputs.image-digest }}
+          python3 scripts/release.py --candidate $ECR_REGISTRY/$ECR_REPOSITORY@${{ needs.build-and-push.outputs.image-digest }} --baseline evidence/baseline.json
