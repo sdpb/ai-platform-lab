@@ -69,6 +69,7 @@ terraform apply tfplan
 ```
 
 Outputs will provide:
+
 - `ecr_repository_url` (add as GitHub repository variable `ECR_REPOSITORY`)
 - `ci_build_role_arn` (add as GitHub repository secret `AWS_BUILD_OIDC_ROLE_ARN`)
 
