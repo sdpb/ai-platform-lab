@@ -23,7 +23,8 @@ resource "aws_kms_alias" "state_key" {
 
 # S3 Bucket for Terraform Remote State
 resource "aws_s3_bucket" "state_bucket" {
-  bucket = var.state_bucket_name
+  bucket        = var.state_bucket_name
+  force_destroy = true
 
   tags = merge(
     var.tags,
@@ -33,7 +34,7 @@ resource "aws_s3_bucket" "state_bucket" {
   )
 
   lifecycle {
-    prevent_destroy = true
+    prevent_destroy = false
   }
 }
 
@@ -88,6 +89,6 @@ resource "aws_dynamodb_table" "state_lock" {
   )
 
   lifecycle {
-    prevent_destroy = true
+    prevent_destroy = false
   }
 }

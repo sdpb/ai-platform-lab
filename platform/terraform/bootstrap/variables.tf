@@ -24,7 +24,7 @@ variable "tags" {
   description = "Common tags applied to all bootstrap resources."
   type        = map(string)
   default = {
-    Project   = "orderlab"
+    project   = "sapb-training"
     ManagedBy = "terraform"
     Role      = "state-bootstrap"
   }

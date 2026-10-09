@@ -37,7 +37,7 @@ variable "tags" {
   description = "Common tags for production infrastructure."
   type        = map(string)
   default = {
-    Project     = "orderlab"
+    project     = "sapb-training"
     Environment = "production"
     ManagedBy   = "terraform"
   }

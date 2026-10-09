@@ -53,7 +53,7 @@ terraform/
 ```bash
 cd terraform/bootstrap
 terraform init
-terraform plan -var="state_bucket_name=<unique-org>-orderlab-tfstate" -out=tfplan
+terraform plan -var="state_bucket_name=sdpb-orderlab-tfstate" -out=tfplan
 terraform apply tfplan
 ```
 
@@ -63,8 +63,8 @@ Note the output `state_bucket_name`.
 
 ```bash
 cd ../environments/shared
-terraform init -backend-config="bucket=<state_bucket_name>"
-terraform plan -var="github_org=<github-org>" -var="github_repo=ai-platform-lab" -out=tfplan
+terraform init -backend-config="bucket=sdpb-orderlab-tfstate"
+terraform plan -var="github_org=sdpb" -var="github_repo=ai-platform-lab" -out=tfplan
 terraform apply tfplan
 ```
 
@@ -77,8 +77,8 @@ Outputs will provide:
 
 ```bash
 cd ../environments/staging
-terraform init -backend-config="bucket=<state_bucket_name>"
-terraform plan -var="github_org=<github-org>" -var="github_repo=ai-platform-lab" -var="ecr_repository_arn=<ecr_arn>" -out=tfplan
+terraform init -backend-config="bucket=sdpb-orderlab-tfstate"
+terraform plan -var="github_org=sdpb" -var="github_repo=ai-platform-lab" -var="ecr_repository_arn=<ecr_arn>" -out=tfplan
 terraform apply tfplan
 ```
 
@@ -88,8 +88,8 @@ Set the output `cd_deploy_role_arn` as secret `AWS_DEPLOY_OIDC_ROLE_ARN` inside 
 
 ```bash
 cd ../environments/production
-terraform init -backend-config="bucket=<state_bucket_name>"
-terraform plan -var="github_org=<github-org>" -var="github_repo=ai-platform-lab" -var="ecr_repository_arn=<ecr_arn>" -out=tfplan
+terraform init -backend-config="bucket=sdpb-orderlab-tfstate"
+terraform plan -var="github_org=sdpb" -var="github_repo=ai-platform-lab" -var="ecr_repository_arn=<ecr_arn>" -out=tfplan
 terraform apply tfplan
 ```
 
