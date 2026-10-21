@@ -1,0 +1,5 @@
+aws_region           = "us-east-1"
+github_org           = "my-github-org"
+github_repo          = "ai-platform-lab"
+ecr_repository_arn   = "arn:aws:ecr:us-east-1:123456789012:repository/orderlab"
+create_oidc_provider = false
