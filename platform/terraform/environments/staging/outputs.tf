@@ -21,4 +21,5 @@ output "secrets_manager_secret_name" {
 output "secret_keys" {
   description = "List of key names stored within the secret object (values masked for security)."
   value       = module.secrets.secret_keys
+  sensitive   = true
 }

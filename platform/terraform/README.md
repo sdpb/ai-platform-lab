@@ -78,7 +78,7 @@ Outputs will provide:
 ```bash
 cd ../environments/staging
 terraform init -backend-config="bucket=sdpb-orderlab-tfstate"
-terraform plan -var="github_org=sdpb" -var="github_repo=ai-platform-lab" -var="ecr_repository_arn=<ecr_arn>" -out=tfplan
+terraform plan -var="github_org=sdpb" -var="github_repo=ai-platform-lab" -var="ecr_repository_arn=arn:aws:ecr:us-east-1:986608278121:repository/sapb-orderlab" -out=tfplan
 terraform apply tfplan
 ```
 
@@ -89,7 +89,7 @@ Set the output `cd_deploy_role_arn` as secret `AWS_DEPLOY_OIDC_ROLE_ARN` inside 
 ```bash
 cd ../environments/production
 terraform init -backend-config="bucket=sdpb-orderlab-tfstate"
-terraform plan -var="github_org=sdpb" -var="github_repo=ai-platform-lab" -var="ecr_repository_arn=<ecr_arn>" -out=tfplan
+terraform plan -var="github_org=sdpb" -var="github_repo=ai-platform-lab" -var="ecr_repository_arn=arn:aws:ecr:us-east-1:986608278121:repository/sapb-orderlab" -out=tfplan
 terraform apply tfplan
 ```
 

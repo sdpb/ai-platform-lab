@@ -18,13 +18,13 @@ variable "github_repo" {
 variable "repository_name" {
   description = "Name of the ECR repository for application container images."
   type        = string
-  default     = "orderlab"
+  default     = "sapb-orderlab"
 }
 
 variable "create_oidc_provider" {
   description = "Whether to create the GitHub Actions OIDC provider in this AWS account."
   type        = bool
-  default     = true
+  default     = false
 }
 
 variable "tags" {

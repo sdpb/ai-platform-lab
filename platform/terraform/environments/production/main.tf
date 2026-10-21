@@ -21,7 +21,7 @@ module "iam" {
   existing_oidc_provider_arn = var.existing_oidc_provider_arn
 
   create_build_role       = false
-  create_deploy_role      = true
+  create_deploy_role      = false
   create_app_runtime_role = true
 
   ecr_repository_arn = var.ecr_repository_arn
@@ -30,8 +30,8 @@ module "iam" {
 }
 
 # Adopt pre-existing AWS Deployer Role (Seeded configuration drift exercise)
-import {
-  to = module.iam.aws_iam_role.cd_deploy[0]
-  id = "orderlab-cd-deploy-production-role"
-}
+# import {
+#   to = module.iam.aws_iam_role.cd_deploy[0]
+#   id = "sapb-cd-deploy-production-role"
+#}
 
