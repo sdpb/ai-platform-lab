@@ -20,10 +20,10 @@ jobs:
     outputs:
       image-digest: ${{ steps.build-image.outputs.digest }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Configure AWS credentials for Build
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ secrets.AWS_BUILD_OIDC_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
@@ -46,7 +46,7 @@ jobs:
           echo "digest=$DIGEST" >> $GITHUB_OUTPUT
 
       - name: Generate build attestation
-        uses: actions/attest-build-provenance@v1
+        uses: actions/attest-build-provenance@v4
         with:
           subject-name: ${{ steps.login-ecr.outputs.registry }}/${{ vars.ECR_REPOSITORY }}
           subject-digest: ${{ steps.build-image.outputs.digest }}
@@ -61,10 +61,10 @@ jobs:
       contents: read
       id-token: write     # Required for OIDC
     steps:
-      - uses: actions/checkout@v4
-      
+      - uses: actions/checkout@v7
+
       - name: Configure AWS credentials for Deploy
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ secrets.AWS_DEPLOY_OIDC_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
@@ -102,10 +102,10 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - uses: actions/checkout@v4
-      
+      - uses: actions/checkout@v7
+
       - name: Configure AWS credentials for Deploy
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ secrets.AWS_DEPLOY_OIDC_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}

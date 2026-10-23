@@ -7,11 +7,19 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Initialize isolated CI configuration
         run: python3 scripts/lab.py init
       - name: Build and start
         run: python3 scripts/lab.py up
+      # `lab.py up` builds the api image as orderlab:local; scan that exact image, no second build.
+      - name: Trivy image scan
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: orderlab:local
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "1"
       - name: Lint
         run: docker compose run --rm --no-deps tests ruff check --no-cache src scripts tests
       - name: Integration and gate tests
