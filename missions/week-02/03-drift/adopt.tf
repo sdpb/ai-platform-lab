@@ -1,0 +1,11 @@
+# Step 5 ("Adopt"): rename to adopt.tf after creating /lab-w2/drift/manual by hand.
+import {
+  to = aws_ssm_parameter.adopted
+  id = "/lab-w2/drift/manual"
+}
+
+resource "aws_ssm_parameter" "adopted" {
+  name  = "/lab-w2/drift/manual"
+  type  = "String"
+  value = "created-by-hand" # code now matches reality; edit later through PRs
+}
