@@ -52,6 +52,28 @@ jobs:
           subject-digest: ${{ steps.build-image.outputs.digest }}
           push-to-registry: false
 
+      # SBOM of the exact pushed image (by digest), attested so consumers can verify it
+      - name: Generate SBOM (CycloneDX)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ steps.login-ecr.outputs.registry }}/${{ vars.ECR_REPOSITORY }}@${{ steps.build-image.outputs.digest }}
+          format: cyclonedx
+          output: sbom.cdx.json
+
+      - name: Attest SBOM
+        uses: actions/attest-sbom@v4
+        with:
+          subject-name: ${{ steps.login-ecr.outputs.registry }}/${{ vars.ECR_REPOSITORY }}
+          subject-digest: ${{ steps.build-image.outputs.digest }}
+          sbom-path: sbom.cdx.json
+          push-to-registry: false
+
+      - name: Upload SBOM
+        uses: actions/upload-artifact@v7
+        with:
+          name: sbom-${{ github.sha }}
+          path: sbom.cdx.json
+
   deploy-staging:
     needs: build-and-push
     runs-on: ubuntu-latest
@@ -73,13 +95,14 @@ jobs:
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Verify build provenance
+      - name: Verify build provenance and SBOM attestation
         env:
           GH_TOKEN: ${{ github.token }}
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
         run: |
           gh attestation verify oci://$ECR_REGISTRY/$ECR_REPOSITORY@${{ needs.build-and-push.outputs.image-digest }} -o ${{ github.repository_owner }}
+          gh attestation verify oci://$ECR_REGISTRY/$ECR_REPOSITORY@${{ needs.build-and-push.outputs.image-digest }} -o ${{ github.repository_owner }} --predicate-type https://cyclonedx.org/bom
 
       - name: Initialize environment
         run: python3 scripts/lab.py init
@@ -114,13 +137,14 @@ jobs:
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Verify build provenance
+      - name: Verify build provenance and SBOM attestation
         env:
           GH_TOKEN: ${{ github.token }}
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
         run: |
           gh attestation verify oci://$ECR_REGISTRY/$ECR_REPOSITORY@${{ needs.build-and-push.outputs.image-digest }} -o ${{ github.repository_owner }}
+          gh attestation verify oci://$ECR_REGISTRY/$ECR_REPOSITORY@${{ needs.build-and-push.outputs.image-digest }} -o ${{ github.repository_owner }} --predicate-type https://cyclonedx.org/bom
 
       - name: Initialize environment
         run: python3 scripts/lab.py init

@@ -9,6 +9,18 @@ jobs:
   test:
     uses: ./.github/workflows/test.yml
 
+  terraform-test:
+    name: Terraform test (modules)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: "~> 1.11"
+      - name: terraform test (mocked provider, no credentials)
+        run: make tf-test
+
   checkov:
     name: Checkov (Terraform)
     runs-on: ubuntu-latest

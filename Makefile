@@ -1,4 +1,4 @@
-.PHONY: init up down test verify load reset-faults
+.PHONY: init up down test verify load reset-faults tf-fmt tf-validate tf-test
 init:
 	python3 scripts/lab.py init
 up:
@@ -29,3 +29,9 @@ tf-validate:
 	terraform -chdir=platform/terraform/environments/shared validate
 	terraform -chdir=platform/terraform/environments/staging validate
 	terraform -chdir=platform/terraform/environments/production validate
+TF_MODULES := ecr iam secrets
+tf-test:
+	@set -e; for m in $(TF_MODULES); do \
+		terraform -chdir=platform/terraform/modules/$$m init -backend=false -input=false >/dev/null; \
+		terraform -chdir=platform/terraform/modules/$$m test; \
+	done
