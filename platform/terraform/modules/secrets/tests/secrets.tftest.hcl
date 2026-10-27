@@ -1,6 +1,6 @@
 # Plan-only tests: no AWS credentials or real resources needed.
+# random is not mocked: it runs offline, and older Terraform cannot mock ephemeral resources.
 mock_provider "aws" {}
-mock_provider "random" {}
 
 variables {
   environment = "staging"
