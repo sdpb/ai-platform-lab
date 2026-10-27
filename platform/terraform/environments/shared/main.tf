@@ -23,6 +23,7 @@ module "iam" {
 
   github_org           = var.github_org
   github_repo          = var.github_repo
+  oidc_subject_prefix  = var.oidc_subject_prefix
   environment          = "shared"
   create_oidc_provider = var.create_oidc_provider
 

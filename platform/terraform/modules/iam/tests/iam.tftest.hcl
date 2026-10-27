@@ -116,3 +116,20 @@ run "reuses_existing_oidc_provider" {
     error_message = "No new OIDC provider when reusing an existing one."
   }
 }
+
+run "supports_immutable_subject_prefix" {
+  command = plan
+
+  variables {
+    create_deploy_role  = true
+    oidc_subject_prefix = "repo:sdpb@53051637/ai-platform-lab@1410420274"
+  }
+
+  assert {
+    condition = flatten([
+      for c in data.aws_iam_policy_document.cd_deploy_assume_role[0].statement[0].condition : tolist(c.values)
+      if c.variable == "token.actions.githubusercontent.com:sub"
+    ]) == ["repo:sdpb@53051637/ai-platform-lab@1410420274:environment:staging"]
+    error_message = "Deploy role trust must use the immutable subject prefix when given."
+  }
+}

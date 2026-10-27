@@ -31,6 +31,7 @@ module "iam" {
 
   github_org                 = var.github_org
   github_repo                = var.github_repo
+  oidc_subject_prefix        = var.oidc_subject_prefix
   environment                = "production"
   create_oidc_provider       = false
   existing_oidc_provider_arn = data.aws_iam_openid_connect_provider.github.arn

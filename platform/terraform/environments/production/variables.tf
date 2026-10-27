@@ -21,6 +21,12 @@ variable "repository_name" {
   default     = "sapb-orderlab"
 }
 
+variable "oidc_subject_prefix" {
+  description = "GitHub OIDC sub prefix. This repo uses immutable subjects (gh api repos/<org>/<repo>/actions/oidc/customization/sub)."
+  type        = string
+  default     = "repo:sdpb@53051637/ai-platform-lab@1410420274"
+}
+
 variable "tags" {
   description = "Common tags for production infrastructure."
   type        = map(string)
