@@ -14,21 +14,13 @@ load:
 reset-faults:
 	python3 scripts/lab.py reset-faults
 tf-fmt:
-	terraform -chdir=platform/terraform/bootstrap fmt -check
-	terraform -chdir=platform/terraform/modules/ecr fmt -check
-	terraform -chdir=platform/terraform/modules/iam fmt -check
-	terraform -chdir=platform/terraform/modules/secrets fmt -check
-	terraform -chdir=platform/terraform/environments/shared fmt -check
-	terraform -chdir=platform/terraform/environments/staging fmt -check
-	terraform -chdir=platform/terraform/environments/production fmt -check
+	terraform fmt -check -recursive platform/terraform missions
+TF_DIRS := bootstrap modules/ecr modules/iam modules/secrets environments/shared environments/staging environments/production
 tf-validate:
-	terraform -chdir=platform/terraform/bootstrap validate
-	terraform -chdir=platform/terraform/modules/ecr validate
-	terraform -chdir=platform/terraform/modules/iam validate
-	terraform -chdir=platform/terraform/modules/secrets validate
-	terraform -chdir=platform/terraform/environments/shared validate
-	terraform -chdir=platform/terraform/environments/staging validate
-	terraform -chdir=platform/terraform/environments/production validate
+	@set -e; for d in $(TF_DIRS); do \
+		terraform -chdir=platform/terraform/$$d init -backend=false -input=false >/dev/null; \
+		terraform -chdir=platform/terraform/$$d validate; \
+	done
 TF_MODULES := ecr iam secrets
 tf-test:
 	@set -e; for m in $(TF_MODULES); do \
