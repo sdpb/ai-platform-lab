@@ -22,6 +22,13 @@ resource "aws_iam_openid_connect_provider" "github_actions" {
   ]
 
   tags = var.tags
+
+  # shortcut: the sandbox account's provider was created by hand (infra team) and is adopted with an
+  # import block in environments/shared; never edit or delete it. Remove both for a fresh account.
+  lifecycle {
+    ignore_changes  = all
+    prevent_destroy = true
+  }
 }
 
 # ---------------------------------------------------------------------------------------------------------------------
