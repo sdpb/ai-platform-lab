@@ -1,62 +1,70 @@
-# ADR 002 — Terraform remote state, environment isolation, and IaC design
+# ADR-001 — IaC and environment strategy
 
-Status: accepted
+Status: accepted (Week 2)
 
-**Constraints:** Separate blast radius between environments; no long-lived AWS credentials; Terraform state must be encrypted and locked; secrets must not land in state as plaintext; new bootstrap resources cannot depend on remote state they are creating.
+**Constraints:** separate blast radius between environments; no long-lived AWS credentials; Terraform state encrypted and locked; secrets never in state or plan files; the state backend cannot depend on the remote state it creates; the whole stack must be cheap to destroy and rebuild (this is a training account).
 
 ---
 
 ## Decision
 
-### 1. Bootstrap-first provisioning
+### 1. Bootstrap first, with local admin
 
-A dedicated `bootstrap/` stack provisions the state backend itself (S3 bucket + DynamoDB table). It uses a **local state** initially (the only safe choice when the remote backend doesn't exist yet). After applying, all other stacks switch to the remote S3 backend. This is a one-time, one-person operation.
+`platform/terraform/bootstrap/` creates the state bucket (versioned, KMS-encrypted, public access blocked) and a DynamoDB lock table, using **local state** and an admin login. That login is also used for the first apply of `shared`, `staging` and `production`. After that, changes go through CI (section 6).
 
-**Alternatives considered:**
-- Terraform Cloud: avoids the chicken-and-egg problem but adds a mandatory SaaS dependency outside the AWS-only scope of this lab.
-- Manually creating S3 via the console: breaks the "everything in IaC" requirement and produces un-tracked resources.
+The bucket uses `force_destroy = true` and no `prevent_destroy`, and the secrets use `recovery_window_in_days = 0`. That is deliberate: the account is rebuilt often. A real production account would flip all three.
 
-### 2. Separate state per environment (blast radius minimization)
+**Alternatives:** Terraform Cloud (extra SaaS outside the AWS-only scope); creating the bucket by hand (untracked resource).
 
-Three isolated remote state files:
-- `shared/terraform.tfstate` — ECR repository and the one CI build IAM role.
-- `staging/terraform.tfstate` — Staging secrets and CD deploy role scoped to the `staging` GitHub Environment.
-- `production/terraform.tfstate` — Production secrets and CD deploy role scoped to the `production` GitHub Environment.
+### 2. One state per environment
 
-A state lock acquisition or corruption in `staging` cannot affect `production`. Rolling back production state never touches staging resources.
+| State | Contents |
+|---|---|
+| `shared/terraform.tfstate` | ECR repository, GitHub OIDC provider, CI build role |
+| `staging/terraform.tfstate` | Staging secret, CD deploy role (`environment:staging`), runtime role |
+| `production/terraform.tfstate` | Production secret, CD deploy role (`environment:production`), runtime role |
 
-**Alternative considered:** One shared state file. Rejected because a destructive change to any resource (e.g. the ECR repo) would require access to all environments simultaneously, and a bad `terraform apply` in staging could destroy production IAM roles.
+A lock or a broken apply in staging cannot touch production. Staging and production find the OIDC provider and ECR repository by name (data sources), so no ARNs are copied between stacks and they must be applied after `shared`.
 
-### 3. S3 native locking (Terraform ≥ 1.10) with DynamoDB fallback
+**Alternative:** one state file — rejected because every change would need access to every environment at once.
 
-`use_lockfile = true` is set on all environment backends. A DynamoDB table is also provisioned during bootstrap with `hash_key = "LockID"` for dual-mode compatibility and defense-in-depth.
+### 3. Native S3 locking
 
-**Why both:** The DynamoDB table is free under Pay-Per-Request and costs nothing extra. It protects teams that downgrade or use tools that do not support native S3 locking.
+`use_lockfile = true` on every backend (Terraform ≥ 1.10). The DynamoDB table stays available for older tooling but is not configured by default.
 
-### 4. Secrets in AWS Secrets Manager — never in state
+### 4. Secrets never in state
 
-The `modules/secrets` module uses `aws_secretsmanager_secret_version` to store credentials. The `random_password` resources that generate values **do** appear in state (unavoidably), but the module is designed so that:
-- All `sensitive = true` markings are applied on outputs.
-- The state file itself is KMS-encrypted at rest (bucket SSE with CMK).
-- No secret value is written to any `.tfvars` file committed to Git.
+`modules/secrets` generates credentials with `ephemeral "random_password"` and writes them with the write-only `secret_string_wo`. Neither value is stored in state or in plan files; a test asserts `secret_string` stays null. Terraform cannot diff a value it never stored, so rotation is explicit: bump `secret_version`. This is the Week 2 mission's fix ([missions/week-02](../../missions/week-02/README.md)) applied to the platform.
 
-**Consequence:** A `terraform state pull` will expose the random_password result. This is a known Terraform limitation documented in the [sensitive data in state](https://developer.hashicorp.com/terraform/language/state/sensitive-data) docs. Mitigation: KMS encryption on state bucket + strict S3 bucket policy, and the Mission for Week 2 demonstrates the exploit and fix using ephemeral values.
+### 5. Separate IAM roles, all created by Terraform
 
-### 5. IAM role separation: build vs. deploy
+| Role | Stack | OIDC `sub` trust | Permissions | GitHub secret |
+|---|---|---|---|---|
+| `orderlab-ci-build-shared-role` | shared | `repo:<org>/<repo>:ref:refs/heads/main` | push to the one ECR repo | `AWS_BUILD_OIDC_ROLE_ARN` (repo) |
+| `orderlab-cd-deploy-<env>-role` | staging, production | `repo:<org>/<repo>:environment:<env>` | pull from ECR, read that environment's secret | `AWS_DEPLOY_OIDC_ROLE_ARN` (environment) |
+| `orderlab-runtime-<env>-role` | staging, production | none (ECS/EC2 service) | read that environment's secret | — |
 
-| Role | Trust | Permissions |
-|------|-------|-------------|
-| `ci_build` (shared) | Any ref in the repo (`repo:<org>/<repo>:*`) | `ecr:PutImage`, `ecr:InitiateLayerUpload`, etc. |
-| `cd_deploy` (per env) | Strictly `repo:<org>/<repo>:environment:<env>` | `ecr:BatchGetImage`, `secretsmanager:GetSecretValue` for that env only |
+The build role cannot read secrets and only `main` can assume it. A deploy role can only be assumed by a job running in its GitHub Environment, which requires approval.
 
-The build role cannot access secrets. The deploy role cannot push images. An unauthorized workflow branch cannot assume the deploy role because its OIDC `sub` claim does not match the `environment:` suffix.
+### 6. Terraform runs in CI after bootstrap
 
-**Evidence to attach:** `terraform plan` output showing clean plan; IAM credential report confirming 0 access keys; `oidc:sub` condition in role trust policies.
+`.github/workflows/terraform.yml` runs on push to `main` (paths under `platform/terraform/`) and manually:
+
+1. `checks`: `make tf-fmt` and `make tf-test` (no credentials).
+2. `plan` (matrix shared, staging, production): plan goes to the job summary.
+3. `apply` (one at a time, shared → staging → production): runs in the GitHub Environment of the same name, each with a required reviewer. It re-plans with `-out` and applies that exact plan. Plan files are never uploaded.
+
+PRs never get cloud access (`pr.yml` runs fmt, `terraform test`, Checkov and Trivy only). Manual runs default to plan only. One concurrency group serializes runs and never cancels one mid-apply.
+
+Plan and apply both use the single pre-existing role `sapb-training-deployer` (`vars.TF_DEPLOYER_ROLE_ARN`). It is managed outside this repo, like the bootstrap admin.
 
 ---
 
 ## Consequences
 
-- The bootstrap must be applied manually once, out of band of CI, before CI can run against remote state.
-- Adding a new environment (e.g. `canary`) requires a new directory under `environments/` and a new state key — no module changes needed.
-- Secret rotation requires a `terraform apply` to create a new `aws_secretsmanager_secret_version`; the old version is retained by AWS until explicitly deleted.
+- Bootstrap and the first apply need a local admin login; everything after goes through reviewed CI.
+- One deployer role for plan and apply means plans are not least-privilege. Environment approval is the control.
+- The deployer's trust is `repo:sdpb*:*` and it has `AdministratorAccess`: any workflow in any `sdpb*` repo can assume it. Narrowing it to this repo's `main` branch and environments is the next hardening step.
+- Adding an environment means a new folder under `environments/` and a new GitHub Environment; modules do not change.
+
+**Evidence to attach:** clean `terraform plan` after apply; IAM credential report with 0 access keys; `terraform state pull` showing no secret values; role trust policies.
