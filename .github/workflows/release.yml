@@ -147,7 +147,7 @@ jobs:
           # python3 scripts/release.py --candidate $ECR_REGISTRY/$ECR_REPOSITORY@${{ needs.build-and-push.outputs.image-digest }} --baseline evidence/baseline.json
 
   deploy-production:
-    needs: deploy-staging
+    needs: [build-and-push, deploy-staging]
     runs-on: ubuntu-latest
     environment: production
     concurrency: production
