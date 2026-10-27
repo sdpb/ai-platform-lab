@@ -26,7 +26,7 @@ module "iam" {
   environment          = "shared"
   create_oidc_provider = var.create_oidc_provider
 
-  create_build_role       = false
+  create_build_role       = true
   create_deploy_role      = false
   create_app_runtime_role = false
 

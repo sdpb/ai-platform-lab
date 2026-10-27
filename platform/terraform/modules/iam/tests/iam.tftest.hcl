@@ -76,8 +76,8 @@ run "build_role_is_scoped_to_repo_and_ecr" {
     condition = flatten([
       for c in data.aws_iam_policy_document.ci_build_assume_role[0].statement[0].condition : tolist(c.values)
       if c.variable == "token.actions.githubusercontent.com:sub"
-    ]) == ["repo:sdpb/ai-platform-lab:*"]
-    error_message = "Build role trust must be limited to this repository."
+    ]) == ["repo:sdpb/ai-platform-lab:ref:refs/heads/main"]
+    error_message = "Build role trust must be limited to the main branch of this repository."
   }
 
   assert {

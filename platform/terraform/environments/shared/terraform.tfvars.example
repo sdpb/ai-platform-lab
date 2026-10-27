@@ -1,5 +1,4 @@
-aws_region           = "us-east-1"
-github_org           = "my-github-org"
-github_repo          = "ai-platform-lab"
-repository_name      = "orderlab"
-create_oidc_provider = true
+aws_region      = "us-east-1"
+github_org      = "sdpb"
+github_repo     = "ai-platform-lab"
+repository_name = "sapb-orderlab"

@@ -46,10 +46,11 @@ data "aws_iam_policy_document" "ci_build_assume_role" {
       values   = ["sts.amazonaws.com"]
     }
 
+    # Only main may push images; PRs and feature branches cannot assume this role.
     condition {
-      test     = "StringLike"
+      test     = "StringEquals"
       variable = "${local.oidc_issuer}:sub"
-      values   = ["repo:${var.github_org}/${var.github_repo}:*"]
+      values   = ["repo:${var.github_org}/${var.github_repo}:ref:refs/heads/main"]
     }
   }
 }

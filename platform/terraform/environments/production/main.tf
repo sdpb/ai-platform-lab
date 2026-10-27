@@ -17,27 +17,29 @@ module "secrets" {
   tags                    = var.tags
 }
 
+# Created by the shared stack; looked up by name so no ARNs are passed between stacks.
+data "aws_iam_openid_connect_provider" "github" {
+  url = "https://token.actions.githubusercontent.com"
+}
+
+data "aws_ecr_repository" "app" {
+  name = var.repository_name
+}
+
 module "iam" {
   source = "../../modules/iam"
 
   github_org                 = var.github_org
   github_repo                = var.github_repo
   environment                = "production"
-  create_oidc_provider       = var.create_oidc_provider
-  existing_oidc_provider_arn = var.existing_oidc_provider_arn
+  create_oidc_provider       = false
+  existing_oidc_provider_arn = data.aws_iam_openid_connect_provider.github.arn
 
   create_build_role       = false
-  create_deploy_role      = false
+  create_deploy_role      = true
   create_app_runtime_role = true
 
-  ecr_repository_arn = var.ecr_repository_arn
+  ecr_repository_arn = data.aws_ecr_repository.app.arn
   secret_arns        = [module.secrets.secret_arn]
   tags               = var.tags
 }
-
-# Adopt pre-existing AWS Deployer Role (Seeded configuration drift exercise)
-# import {
-#   to = module.iam.aws_iam_role.cd_deploy[0]
-#   id = "sapb-cd-deploy-production-role"
-#}
-

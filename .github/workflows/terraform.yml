@@ -33,8 +33,6 @@ env:
   TF_INPUT: "false"
   TF_VAR_github_org: ${{ github.repository_owner }}
   TF_VAR_aws_region: ${{ vars.AWS_REGION }}
-  TF_VAR_ecr_repository_arn: ${{ vars.ECR_REPOSITORY_ARN }}
-  TF_VAR_existing_oidc_provider_arn: ${{ vars.OIDC_PROVIDER_ARN }}
 
 jobs:
   checks:
