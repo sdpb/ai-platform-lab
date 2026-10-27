@@ -13,7 +13,7 @@ module "secrets" {
 
   name                    = "orderlab-secrets"
   environment             = "production"
-  recovery_window_in_days = 30
+  recovery_window_in_days = 0
   tags                    = var.tags
 }
 
