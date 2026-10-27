@@ -40,11 +40,11 @@ A lock or a broken apply in staging cannot touch production. Staging and product
 
 | Role | Stack | OIDC `sub` trust | Permissions | GitHub secret |
 |---|---|---|---|---|
-| `orderlab-ci-build-shared-role` | shared | `repo:<org>/<repo>:ref:refs/heads/main` | push to the one ECR repo | `AWS_BUILD_OIDC_ROLE_ARN` (repo) |
-| `orderlab-cd-deploy-<env>-role` | staging, production | `repo:<org>/<repo>:environment:<env>` | pull from ECR, read that environment's secret | `AWS_DEPLOY_OIDC_ROLE_ARN` (environment) |
+| `orderlab-ci-build-shared-role` | shared | `<prefix>:ref:refs/heads/main` | push to the one ECR repo | `AWS_BUILD_OIDC_ROLE_ARN` (repo) |
+| `orderlab-cd-deploy-<env>-role` | staging, production | `<prefix>:environment:<env>` | pull from ECR, read that environment's secret | `AWS_DEPLOY_OIDC_ROLE_ARN` (environment) |
 | `orderlab-runtime-<env>-role` | staging, production | none (ECS/EC2 service) | read that environment's secret | — |
 
-The build role cannot read secrets and only `main` can assume it. A deploy role can only be assumed by a job running in its GitHub Environment, which requires approval.
+`<prefix>` is `repo:sdpb@53051637/ai-platform-lab@1410420274`: this repo uses GitHub's immutable subject format (owner and repo IDs), so a renamed or re-created repo cannot inherit the trust. The build role cannot read secrets and only `main` can assume it. A deploy role can only be assumed by a job running in its GitHub Environment, which requires approval.
 
 ### 6. Terraform runs in CI after bootstrap
 
@@ -56,7 +56,7 @@ The build role cannot read secrets and only `main` can assume it. A deploy role 
 
 PRs never get cloud access (`pr.yml` runs fmt, `terraform test`, Checkov and Trivy only). Manual runs default to plan only. One concurrency group serializes runs and never cancels one mid-apply.
 
-Plan and apply both use the single pre-existing role `sapb-training-deployer` (`vars.TF_DEPLOYER_ROLE_ARN`). It is managed outside this repo, like the bootstrap admin.
+Plan and apply both use the single pre-existing role `sapb-training-deployer` (`vars.TF_DEPLOYER_ROLE_ARN`). It is managed outside this repo, like the bootstrap admin. Its trust allows exactly `<prefix>:ref:refs/heads/main` and `<prefix>:environment:{shared,staging,production}`.
 
 ---
 
@@ -64,7 +64,8 @@ Plan and apply both use the single pre-existing role `sapb-training-deployer` (`
 
 - Bootstrap and the first apply need a local admin login; everything after goes through reviewed CI.
 - One deployer role for plan and apply means plans are not least-privilege. Environment approval is the control.
-- The deployer's trust is `repo:sdpb*:*` and it has `AdministratorAccess`: any workflow in any `sdpb*` repo can assume it. Narrowing it to this repo's `main` branch and environments is the next hardening step.
+- The deployer still has `AdministratorAccess`; its trust is limited to this repo's `main` and approval-gated environments. Splitting a read-only plan role from the apply role is the next hardening step.
+- The sandbox account's GitHub OIDC provider was made by hand. `shared` adopts it with an import block, ignores all changes to it and refuses to destroy it; a fresh account drops `import.tf` and the lifecycle block and lets `shared` create it.
 - Adding an environment means a new folder under `environments/` and a new GitHub Environment; modules do not change.
 
 **Evidence to attach:** clean `terraform plan` after apply; IAM credential report with 0 access keys; `terraform state pull` showing no secret values; role trust policies.

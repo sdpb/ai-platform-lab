@@ -21,7 +21,9 @@ Everything is easy to destroy on purpose (`force_destroy`, no recovery window on
 
 Needs Terraform ≥ 1.11 and an admin login (`asp sandbox login`, then `export AWS_PROFILE=sandbox`). Only bootstrap and the first apply run locally; later changes go through `.github/workflows/terraform.yml`.
 
-The account can hold only one GitHub OIDC provider. `shared` creates it; if one already exists (made by hand), delete it first.
+The account can hold only one GitHub OIDC provider. In the sandbox account it already exists, so `environments/shared/import.tf` adopts it untouched (all changes ignored, destroy blocked). In a fresh account, delete `import.tf` and the `lifecycle` block on `aws_iam_openid_connect_provider` so `shared` creates it.
+
+Role trust uses GitHub's immutable subject (`oidc_subject_prefix`). Check yours with `gh api repos/<org>/<repo>/actions/oidc/customization/sub`.
 
 ```bash
 cd platform/terraform/bootstrap
@@ -45,7 +47,7 @@ gh secret set AWS_DEPLOY_OIDC_ROLE_ARN --env staging --body "$A/orderlab-cd-depl
 gh secret set AWS_DEPLOY_OIDC_ROLE_ARN --env production --body "$A/orderlab-cd-deploy-production-role"
 ```
 
-Repository variables used by the workflows: `AWS_REGION`, `ECR_REPOSITORY`, `TF_STATE_BUCKET`, `TF_DEPLOYER_ROLE_ARN`. GitHub Environments `shared`, `staging` and `production` each need a required reviewer.
+Repository variables used by the workflows: `AWS_REGION`, `ECR_REPOSITORY`, `TF_STATE_BUCKET`, `TF_DEPLOYER_ROLE_ARN`. GitHub Environments `shared`, `staging` and `production` each need a required reviewer. Destroying `shared` fails on purpose while the provider is adopted; run `terraform state rm 'module.iam.aws_iam_openid_connect_provider.github_actions[0]'` first.
 
 Rotate generated secrets: bump `secret_version` on the `secrets` module and apply.
 
