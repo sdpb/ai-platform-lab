@@ -13,6 +13,10 @@ jobs:
   build-and-push:
     needs: test
     runs-on: ubuntu-latest
+    # Two runs for the same commit must not push the same immutable tag concurrently
+    concurrency:
+      group: build-${{ github.sha }}
+      cancel-in-progress: false
     permissions:
       contents: read
       id-token: write      # Required for OIDC
@@ -32,14 +36,39 @@ jobs:
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
+      # Tags are immutable, so a re-run of the same commit (re-run jobs, flaky later step)
+      # must reuse the image already pushed for this SHA instead of pushing it again.
+      # batch-get-image is already allowed by the build role; no extra IAM needed.
+      - name: Look up existing image for this commit
+        id: existing
+        env:
+          ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          DIGEST=$(aws ecr batch-get-image --repository-name "$ECR_REPOSITORY" \
+            --image-ids imageTag="$IMAGE_TAG" \
+            --query 'images[0].imageId.imageDigest' --output text)
+          if [ -n "$DIGEST" ] && [ "$DIGEST" != "None" ]; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+            echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+            echo "Tag $IMAGE_TAG already exists ($DIGEST); reusing it, skipping build and push." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Build, tag, and push image to Amazon ECR
         id: build-image
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
           IMAGE_TAG: ${{ github.sha }}
+          EXISTING_DIGEST: ${{ steps.existing.outputs.digest }}
         run: |
           IMAGE_URI=$ECR_REGISTRY/$ECR_REPOSITORY
+          if [ "${{ steps.existing.outputs.found }}" = "true" ]; then
+            echo "digest=$EXISTING_DIGEST" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           docker build -t $IMAGE_URI:$IMAGE_TAG .
           docker push $IMAGE_URI:$IMAGE_TAG
           DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' $IMAGE_URI:$IMAGE_TAG | cut -d'@' -f2)
