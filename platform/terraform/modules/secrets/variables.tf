@@ -45,3 +45,9 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
+
+variable "secret_version" {
+  description = "Bump to generate and write new credentials (write-only values cannot be diffed)."
+  type        = number
+  default     = 1
+}

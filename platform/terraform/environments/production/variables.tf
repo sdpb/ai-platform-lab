@@ -15,22 +15,16 @@ variable "github_repo" {
   default     = "ai-platform-lab"
 }
 
-variable "ecr_repository_arn" {
-  description = "ARN of the ECR repository to grant production deployment pull permissions."
+variable "repository_name" {
+  description = "Name of the ECR repository created by the shared stack."
   type        = string
-  default     = "*"
+  default     = "sapb-orderlab"
 }
 
-variable "create_oidc_provider" {
-  description = "Whether to create the GitHub Actions OIDC provider (false if created in shared stack or pre-existing)."
-  type        = bool
-  default     = false
-}
-
-variable "existing_oidc_provider_arn" {
-  description = "ARN of an existing GitHub Actions OIDC provider if create_oidc_provider is false."
+variable "oidc_subject_prefix" {
+  description = "GitHub OIDC sub prefix. This repo uses immutable subjects (gh api repos/<org>/<repo>/actions/oidc/customization/sub)."
   type        = string
-  default     = ""
+  default     = "repo:sdpb@53051637/ai-platform-lab@1410420274"
 }
 
 variable "tags" {

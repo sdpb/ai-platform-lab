@@ -20,6 +20,6 @@ output "read_policy_arn" {
 
 output "secret_keys" {
   description = "List of key names stored within the secret object (values masked for security)."
-  value       = keys(local.combined_secrets)
+  value       = concat(local.generated_keys, keys(var.custom_secrets))
   sensitive   = true
 }

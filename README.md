@@ -1,6 +1,14 @@
-# OrderLab — DevOps service-ownership project
+# AI Platform Lab
 
-A working Python order API, PostgreSQL database, and controllable payment service for the [four-week DevOps course](https://docs.google.com/document/d/1F0GCS7TsjeNFUCLOk9jZ-i1oruW5qbKSn_rIRidci9A/edit). It includes integration tests, Docker packaging, basic CI, load generation, metrics/traces, additive migration scaffolding, failure switches, and consistent backup/restore drills.
+Capstone repo for a 10-week AI Platform Engineer plan. Weeks 1 to 5 build a production-style DevOps platform on AWS around **OrderLab**: a Python order API, PostgreSQL and a controllable payment service, with tests, Docker packaging, load generation, metrics/traces, migrations, fault switches and backup/restore drills. Weeks 6 to 10 add AI services on the same pipeline, Terraform and cluster.
+
+| Path | What lives there |
+|---|---|
+| `src/`, `scripts/`, `tests/`, `db/`, `observability/` | OrderLab application and its local tooling (this README) |
+| `platform/terraform/` | AWS infrastructure: state, ECR, OIDC roles, secrets ([guide](platform/terraform/README.md)) |
+| `missions/week-NN/` | Standalone weekly exercises |
+| `docs/adr/` | Architecture Decision Records |
+| `.github/workflows/` | CI/CD (see [CI/CD](#cicd)) |
 
 ## Start locally
 
@@ -56,7 +64,7 @@ The services use separate logical tables in one lab database. The payment transa
 
 The API commits a pending order intent, locks that order during confirmation, calls the idempotent downstream, then commits its final state. Both services use database uniqueness, not process memory, to prevent duplicate business effects. A bounded retry budget handles transient failures; permanent declines remain `rejected`. Pending operations can be resumed by repeating the original key and payload. No background reconciler is supplied.
 
-`/health/live` checks process liveness. `/health/ready` checks PostgreSQL and the readiness switch; it does not restart the service because a payment dependency is down. One Uvicorn worker per container keeps lab fault controls deterministic. See [design decisions](docs/adr/001-release-strategy.md) and [known limitations](docs/architecture.md).
+`/health/live` checks process liveness. `/health/ready` checks PostgreSQL and the readiness switch; it does not restart the service because a payment dependency is down. One Uvicorn worker per container keeps lab fault controls deterministic. See [design decisions](docs/adr/) and [known limitations](docs/architecture.md).
 
 ## Verify the working project
 
@@ -138,16 +146,22 @@ Use the actual archive path printed by `backup`. An exported PostgreSQL snapshot
 
 Restore replaces **only** the disposable `restore-db` database, never the main database. It starts an isolated application on [localhost:8100/docs](http://localhost:8100/docs), compares all restored order/payment rows, reads an existing order, and creates/reads a new one. `evidence/restore.json` records actual elapsed recovery time, snapshot age, newest restored transaction, known new orders absent from the backup, and whether targets were met. An old backup may restore correctly but fail the RPO gate. This is a logical full-backup drill, not point-in-time recovery or multi-region DR.
 
-## Training and CI
+## CI/CD
 
-- [Four-week lab guide](docs/labs.md): experiments, expected evidence, and trainee-owned extensions.
+| Workflow | Trigger | What it does |
+|---|---|---|
+| `pr.yml` | Every PR | App tests + Trivy image scan (`test.yml`), Terraform fmt and `terraform test`, Checkov. No cloud access. |
+| `release.yml` | Push to `main` (app changes) | Tests, build once, push to ECR, Trivy scan of the pushed digest, provenance + SBOM attestations, then staging and production deploy jobs (approval required) that verify both attestations. |
+| `terraform.yml` | Push to `main` (`platform/terraform/**`) or manual | Plan all environments, then apply shared → staging → production, each behind an approval. |
+
+AWS access uses GitHub OIDC only; there are no long-lived keys. The deploy steps are placeholders until the cluster exists (Week 3).
+
+## Docs
+
+- [Decision records](docs/adr/): [ADR-000](docs/adr/000-release-strategy.md) release path, [ADR-001](docs/adr/001-iac-and-environment-strategy.md) IaC and environments.
 - [Runbook](docs/runbook.md): diagnosis, recovery, and escalation.
 - [Architecture and limits](docs/architecture.md): transaction boundaries and operational trade-offs.
-- [Decision record templates](docs/adr/001-release-strategy.md): release, runtime/IaC, and recovery.
-- [Completion scope](docs/scope.md): what the starter supplies and what trainees implement.
-- [Local verification report](docs/verification.md): observed results and links to the captured evidence.
-
-`.github/workflows/ci.yml` runs the Docker-based checks and restore drill when this directory is used as the root of its own GitHub repository. It is supplied locally; no remote repository or hosted CI execution is implied. Cloud IAM, OIDC, Terraform backend provisioning, and Kubernetes manifests are trainee/environment-specific work. No Kubernetes deployment is included.
+- [Starter material](docs/starter/): the original 4-week course guide, scope and verification report, kept for reference.
 
 ## Stop and clean up
 

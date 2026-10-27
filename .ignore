@@ -1,0 +1,3 @@
+# Search tools (ripgrep, Claude Code Grep/Glob) honor this; git does not.
+# localdocs/ stays out of git but searchable.
+!localdocs/

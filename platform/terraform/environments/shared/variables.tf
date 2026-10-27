@@ -22,9 +22,15 @@ variable "repository_name" {
 }
 
 variable "create_oidc_provider" {
-  description = "Whether to create the GitHub Actions OIDC provider in this AWS account."
+  description = "Whether to create the GitHub Actions OIDC provider (one per AWS account). Set false if the account already has one."
   type        = bool
-  default     = false
+  default     = true
+}
+
+variable "oidc_subject_prefix" {
+  description = "GitHub OIDC sub prefix. This repo uses immutable subjects (gh api repos/<org>/<repo>/actions/oidc/customization/sub)."
+  type        = string
+  default     = "repo:sdpb@53051637/ai-platform-lab@1410420274"
 }
 
 variable "tags" {

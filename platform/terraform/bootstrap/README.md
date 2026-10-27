@@ -2,7 +2,7 @@
 
 This directory provisions the foundational AWS infrastructure required to host Terraform remote state securely and with locking:
 
-- **S3 Bucket**: Encrypted, versioned, private S3 bucket storing state files with `prevent_destroy` protection.
+- **S3 Bucket**: Encrypted, versioned, private S3 bucket storing state files. `force_destroy` is on so the lab can be torn down often.
 - **KMS Key**: Customer Managed Key (CMK) with automated key rotation for server-side encryption of state files.
 - **Public Access Block**: Enforces private access only, preventing any public leakage of state data.
 - **DynamoDB Lock Table**: Distributed locking table with `LockID` primary key (used by Terraform S3 backend).

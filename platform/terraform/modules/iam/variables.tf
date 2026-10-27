@@ -61,3 +61,9 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
+
+variable "oidc_subject_prefix" {
+  description = "Prefix of the GitHub OIDC sub claim. Null means repo:<org>/<repo>; repos using immutable subjects send repo:<org>@<owner_id>/<repo>@<repo_id>."
+  type        = string
+  default     = null
+}

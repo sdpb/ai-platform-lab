@@ -4,6 +4,7 @@ locals {
   ) : var.existing_oidc_provider_arn
 
   oidc_issuer = "token.actions.githubusercontent.com"
+  sub_prefix  = coalesce(var.oidc_subject_prefix, "repo:${var.github_org}/${var.github_repo}")
 }
 
 # GitHub Actions OIDC Provider
@@ -22,6 +23,13 @@ resource "aws_iam_openid_connect_provider" "github_actions" {
   ]
 
   tags = var.tags
+
+  # shortcut: the sandbox account's provider was created by hand (infra team) and is adopted with an
+  # import block in environments/shared; never edit or delete it. Remove both for a fresh account.
+  lifecycle {
+    ignore_changes  = all
+    prevent_destroy = true
+  }
 }
 
 # ---------------------------------------------------------------------------------------------------------------------
@@ -46,10 +54,11 @@ data "aws_iam_policy_document" "ci_build_assume_role" {
       values   = ["sts.amazonaws.com"]
     }
 
+    # Only main may push images; PRs and feature branches cannot assume this role.
     condition {
-      test     = "StringLike"
+      test     = "StringEquals"
       variable = "${local.oidc_issuer}:sub"
-      values   = ["repo:${var.github_org}/${var.github_repo}:*"]
+      values   = ["${local.sub_prefix}:ref:refs/heads/main"]
     }
   }
 }
@@ -126,7 +135,7 @@ data "aws_iam_policy_document" "cd_deploy_assume_role" {
     condition {
       test     = "StringEquals"
       variable = "${local.oidc_issuer}:sub"
-      values   = ["repo:${var.github_org}/${var.github_repo}:environment:${var.environment}"]
+      values   = ["${local.sub_prefix}:environment:${var.environment}"]
     }
   }
 }

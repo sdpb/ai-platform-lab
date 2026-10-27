@@ -1,14 +1,14 @@
 terraform {
-  required_version = ">= 1.10.0"
+  required_version = ">= 1.11.0" # write-only attributes
 
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = "~> 5.0"
+      version = "~> 6.0"
     }
     random = {
       source  = "hashicorp/random"
-      version = "~> 3.5"
+      version = "~> 3.7"
     }
   }
 }
