@@ -1,4 +1,5 @@
-resource "random_password" "db_password" {
+# Ephemeral: generated in memory during plan/apply, never written to state or plan files.
+ephemeral "random_password" "db_password" {
   count = var.generate_random_passwords ? 1 : 0
 
   length           = 24
@@ -6,14 +7,14 @@ resource "random_password" "db_password" {
   override_special = "!#$%&*()-_=+[]{}<>:?"
 }
 
-resource "random_password" "admin_token" {
+ephemeral "random_password" "admin_token" {
   count = var.generate_random_passwords ? 1 : 0
 
   length  = 32
   special = false
 }
 
-resource "random_password" "grafana_password" {
+ephemeral "random_password" "grafana_password" {
   count = var.generate_random_passwords ? 1 : 0
 
   length           = 24
@@ -22,13 +23,7 @@ resource "random_password" "grafana_password" {
 }
 
 locals {
-  generated_secrets = var.generate_random_passwords ? {
-    POSTGRES_PASSWORD = random_password.db_password[0].result
-    LAB_ADMIN_TOKEN   = random_password.admin_token[0].result
-    GRAFANA_PASSWORD  = random_password.grafana_password[0].result
-  } : {}
-
-  combined_secrets = merge(local.generated_secrets, var.custom_secrets)
+  generated_keys = var.generate_random_passwords ? ["POSTGRES_PASSWORD", "LAB_ADMIN_TOKEN", "GRAFANA_PASSWORD"] : []
 }
 
 resource "aws_secretsmanager_secret" "this" {
@@ -40,9 +35,19 @@ resource "aws_secretsmanager_secret" "this" {
   tags = var.tags
 }
 
+# Write-only: sent to AWS, never stored in state. Terraform cannot diff a value it does not
+# store, so new passwords are only written when secret_version changes.
 resource "aws_secretsmanager_secret_version" "this" {
-  secret_id     = aws_secretsmanager_secret.this.id
-  secret_string = jsonencode(local.combined_secrets)
+  secret_id = aws_secretsmanager_secret.this.id
+  secret_string_wo = jsonencode(merge(
+    var.generate_random_passwords ? {
+      POSTGRES_PASSWORD = ephemeral.random_password.db_password[0].result
+      LAB_ADMIN_TOKEN   = ephemeral.random_password.admin_token[0].result
+      GRAFANA_PASSWORD  = ephemeral.random_password.grafana_password[0].result
+    } : {},
+    var.custom_secrets,
+  ))
+  secret_string_wo_version = var.secret_version
 }
 
 data "aws_iam_policy_document" "read_secret" {
