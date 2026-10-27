@@ -1,0 +1,156 @@
+name: Terraform Deploy
+
+# PRs never reach this workflow (pr.yml has no cloud access). Changes land on main, then:
+#   plan (deployer role)  ->  apply (same role, gated by GitHub Environment approval)
+on:
+  push:
+    branches: [ "main" ]
+    paths:
+      - "platform/terraform/**"
+      - ".github/workflows/terraform.yml"
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Environment to deploy"
+        type: choice
+        options: [ all, shared, staging, production ]
+        default: all
+      apply:
+        description: "Apply after plan (otherwise plan only)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+# One Terraform run at a time; never cancel a run that may hold a state lock.
+concurrency:
+  group: terraform-deploy
+  cancel-in-progress: false
+
+env:
+  TF_IN_AUTOMATION: "true"
+  TF_INPUT: "false"
+  TF_VAR_github_org: ${{ github.repository_owner }}
+  TF_VAR_aws_region: ${{ vars.AWS_REGION }}
+  TF_VAR_ecr_repository_arn: ${{ vars.ECR_REPOSITORY_ARN }}
+  TF_VAR_existing_oidc_provider_arn: ${{ vars.OIDC_PROVIDER_ARN }}
+
+jobs:
+  checks:
+    name: fmt / validate / test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: "~> 1.11"
+      - run: make tf-fmt
+      - run: make tf-test
+
+  # Single source of truth for which stacks run, in dependency order (shared first).
+  scope:
+    runs-on: ubuntu-latest
+    outputs:
+      envs: ${{ steps.envs.outputs.envs }}
+    steps:
+      - id: envs
+        env:
+          SELECTED: ${{ inputs.environment || 'all' }}
+        run: |
+          if [ "$SELECTED" = "all" ]; then
+            echo 'envs=["shared","staging","production"]' >> "$GITHUB_OUTPUT"
+          else
+            echo "envs=[\"$SELECTED\"]" >> "$GITHUB_OUTPUT"
+          fi
+
+  plan:
+    name: plan (${{ matrix.env }})
+    needs: [checks, scope]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        env: ${{ fromJSON(needs.scope.outputs.envs) }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: "~> 1.11"
+          terraform_wrapper: false
+
+      - name: Configure AWS credentials (deployer)
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.TF_DEPLOYER_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Init
+        working-directory: platform/terraform/environments/${{ matrix.env }}
+        run: terraform init -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}"
+
+      - name: Validate
+        working-directory: platform/terraform/environments/${{ matrix.env }}
+        run: terraform validate
+
+      # -detailed-exitcode: 0 = no changes, 2 = changes pending (plan is for review in the summary only;
+      # apply re-plans so no plan file containing generated secrets is ever uploaded as an artifact).
+      - name: Plan
+        id: plan
+        working-directory: platform/terraform/environments/${{ matrix.env }}
+        run: |
+          set +e
+          terraform plan -no-color -lock-timeout=5m -detailed-exitcode | tee plan.txt
+          code=${PIPESTATUS[0]}
+          set -e
+          { echo "### Plan: ${{ matrix.env }}"; echo '```'; tail -n 200 plan.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          [ "$code" -eq 1 ] && exit 1
+          echo "changes=$([ "$code" -eq 2 ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+
+  apply:
+    name: apply (${{ matrix.env }})
+    needs: [scope, plan]
+    # Auto-run on push to main; manual runs must opt in with apply=true.
+    if: github.event_name == 'push' || inputs.apply
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Reuses the existing GitHub Environments (plus "shared"); required reviewers there are the approval gate.
+    environment: ${{ matrix.env }}
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      max-parallel: 1
+      fail-fast: true
+      matrix:
+        env: ${{ fromJSON(needs.scope.outputs.envs) }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: "~> 1.11"
+          terraform_wrapper: false
+
+      - name: Configure AWS credentials (deployer)
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.TF_DEPLOYER_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Init
+        working-directory: platform/terraform/environments/${{ matrix.env }}
+        run: terraform init -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}"
+
+      # Plan and apply the same saved plan inside one job, so what is applied is exactly what was computed.
+      - name: Plan
+        working-directory: platform/terraform/environments/${{ matrix.env }}
+        run: terraform plan -no-color -lock-timeout=5m -out=tfplan
+
+      - name: Apply
+        working-directory: platform/terraform/environments/${{ matrix.env }}
+        run: terraform apply -no-color -lock-timeout=5m tfplan
