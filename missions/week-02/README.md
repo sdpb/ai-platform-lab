@@ -18,7 +18,7 @@ terraform state pull | grep -E 'result|secret_string|AKIA'      # BEFORE evidenc
 ```bash
 checkov -d . --check CKV_SECRET_2,CKV2_AWS_34 --compact
 ```
-Expect: `CKV_SECRET_2` (hardcoded AWS key, main.tf:28) and `CKV2_AWS_34` (unencrypted SSM param).
+Expect: `CKV_SECRET_2` (hardcoded AWS key, main.tf:34) and `CKV2_AWS_34` (unencrypted SSM param).
 
 ## 3. Remediate
 
