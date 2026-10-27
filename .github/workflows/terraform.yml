@@ -96,19 +96,16 @@ jobs:
         working-directory: platform/terraform/environments/${{ matrix.env }}
         run: terraform validate
 
-      # -detailed-exitcode: 0 = no changes, 2 = changes pending (plan is for review in the summary only;
-      # apply re-plans so no plan file containing generated secrets is ever uploaded as an artifact).
+      # Plan is for review in the job summary only; apply re-plans so no plan file is ever uploaded.
       - name: Plan
-        id: plan
         working-directory: platform/terraform/environments/${{ matrix.env }}
         run: |
           set +e
-          terraform plan -no-color -lock-timeout=5m -detailed-exitcode | tee plan.txt
+          terraform plan -no-color -lock-timeout=5m | tee plan.txt
           code=${PIPESTATUS[0]}
           set -e
           { echo "### Plan: ${{ matrix.env }}"; echo '```'; tail -n 200 plan.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
-          [ "$code" -eq 1 ] && exit 1
-          echo "changes=$([ "$code" -eq 2 ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          exit "$code"
 
   apply:
     name: apply (${{ matrix.env }})
