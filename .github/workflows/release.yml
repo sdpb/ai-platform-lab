@@ -2,6 +2,14 @@ name: Release Pipeline
 on:
   push:
     branches: [ "main" ]
+    # Infra and docs changes do not change the image; terraform.yml handles infra.
+    paths-ignore:
+      - "platform/terraform/**"
+      - "missions/**"
+      - "docs/**"
+      - "**.md"
+      - ".github/workflows/terraform.yml"
+      - ".github/workflows/pr.yml"
 
 permissions:
   contents: read
@@ -73,6 +81,15 @@ jobs:
           docker push $IMAGE_URI:$IMAGE_TAG
           DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' $IMAGE_URI:$IMAGE_TAG | cut -d'@' -f2)
           echo "digest=$DIGEST" >> $GITHUB_OUTPUT
+
+      # test.yml scanned a different local build; gate the exact digest we attest and deploy.
+      - name: Scan pushed image (Trivy)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ steps.login-ecr.outputs.registry }}/${{ vars.ECR_REPOSITORY }}@${{ steps.build-image.outputs.digest }}
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "1"
 
       - name: Generate build attestation
         uses: actions/attest-build-provenance@v4
