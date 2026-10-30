@@ -1,0 +1,8 @@
+# Local cluster for the capstone: one control plane, two workers so pod rescheduling is visible.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: orderlab
+nodes:
+  - role: control-plane
+  - role: worker
+  - role: worker

@@ -1,0 +1,13 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# The Secret "orderlab-secrets" (POSTGRES_PASSWORD, LAB_ADMIN_TOKEN) is created out of band,
+# never committed: from .env locally, from AWS Secrets Manager in the pipeline.
+resources:
+  - postgres.yaml
+  - payments.yaml
+  - api.yaml
+
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: orderlab

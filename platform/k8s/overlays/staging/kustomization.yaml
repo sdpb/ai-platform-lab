@@ -1,0 +1,14 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: orderlab-staging
+
+resources:
+  - namespace.yaml
+  - ../../base
+
+# Local default; the pipeline overrides it with the attested ECR digest.
+images:
+  - name: orderlab
+    newName: orderlab
+    newTag: local

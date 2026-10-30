@@ -35,6 +35,19 @@ python3 scripts/lab.py smoke
 
 Grafana login: `admin`; password: `GRAFANA_PASSWORD` in `.env`. Ports bind to loopback. PostgreSQL is reachable only inside the Compose network. Local fault endpoints require `X-Lab-Token`; the CLI reads it from `.env`. This is a synthetic-data lab, with no end-user authentication or real payment processing.
 
+## Run on Kubernetes (kind)
+
+Needs `kind` and `kubectl`. Manifests live in [platform/k8s](platform/k8s/): a Kustomize base (PostgreSQL, payments stub, orders API) and one overlay per environment, each in its own namespace on the same local cluster.
+
+```sh
+make k8s-deploy              # creates the kind cluster if needed, loads orderlab:local, deploys staging
+make k8s-smoke               # readiness + one real order through the payment stub
+make k8s-deploy ENV=production
+make k8s-down                # deletes the whole cluster
+```
+
+The `orderlab-secrets` Secret comes from your local `.env` (run `lab.py init` first) and is never committed. The API runs migrations in an init container; the PostgreSQL advisory lock keeps concurrent replicas safe.
+
 ## Create an order
 
 ```sh
