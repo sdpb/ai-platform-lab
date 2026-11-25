@@ -185,7 +185,7 @@ AWS access uses GitHub OIDC only; there are no long-lived keys. The deploy steps
 
 ## Docs
 
-- [Decision records](docs/adr/): [ADR-000](docs/adr/000-release-strategy.md) release path, [ADR-001](docs/adr/001-iac-and-environment-strategy.md) IaC and environments.
+- [Decision records](docs/adr/): [ADR-000](docs/adr/000-release-strategy.md) release path, [ADR-001](docs/adr/001-iac-and-environment-strategy.md) IaC and environments. [ADR-002](docs/adr/002-runtime-and-capacity.md) runtime and capacity.
 - [Runbook](docs/runbook.md): diagnosis, recovery, and escalation.
 - [Architecture and limits](docs/architecture.md): transaction boundaries and operational trade-offs.
 - [Starter material](docs/starter/): the original 4-week course guide, scope and verification report, kept for reference.

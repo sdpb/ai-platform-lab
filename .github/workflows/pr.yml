@@ -41,3 +41,16 @@ jobs:
           # S3 logging/replication/lifecycle/notifications,
           # ECR CMK, KMS key policy, Secrets rotation.
           skip_check: CKV_AWS_136,CKV_AWS_18,CKV_AWS_144,CKV2_AWS_61,CKV2_AWS_62,CKV2_AWS_64,CKV2_AWS_57
+
+  k8s-manifests:
+    name: Kubernetes manifests (render + schema)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - name: Render every overlay and validate against the Kubernetes schemas
+        run: |
+          mkdir -p rendered
+          for o in platform/k8s/overlays/*/; do kubectl kustomize "$o" > "rendered/$(basename "$o").yaml"; done
+          # kubeconform validates built-in resources; the Argo CRDs are installed in the kind job.
+          docker run --rm -v "$PWD/rendered:/w:ro" ghcr.io/yannh/kubeconform:v0.7.0 -strict -ignore-missing-schemas -summary /w
