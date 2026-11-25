@@ -54,3 +54,29 @@ k8s-smoke:
 		-d '{"customer_id":"smoke","sku":"widget","quantity":1,"unit_price_cents":100}' && echo
 k8s-down:
 	kind delete cluster --name orderlab
+
+# Week 3 runtime checks. Load runs in-cluster (k6 pod -> Service), not through a port-forward.
+# The shutdown test restarts every api pod (each one is terminated) while k6 sends 20 orders/s.
+K6_IMAGE := grafana/k6:2.3.0
+.PHONY: k8s-shutdown-test k8s-slow-start-test k8s-dependency-test
+k8s-shutdown-test:
+	@kubectl -n $(K8S_NS) delete pod k6 --ignore-not-found >/dev/null
+	@kubectl -n $(K8S_NS) run k6 -i --restart=Never --image=$(K6_IMAGE) --env=BASE_URL=http://api:8000 --env=DURATION=90s \
+		-- run --quiet - < platform/k8s/tests/orders-load.js & k6=$$!; \
+	for i in $$(seq 120); do kubectl -n $(K8S_NS) get pod k6 2>/dev/null | grep -q Running && break; sleep 1; done; \
+	kubectl -n $(K8S_NS) get pod k6 2>/dev/null | grep -q Running || { kill $$k6 2>/dev/null; echo 'k6 did not start'; exit 1; }; sleep 10; \
+	echo ">>> replacing every api pod under load"; kubectl -n $(K8S_NS) rollout restart deployment/api; \
+	wait $$k6; status=$$?; kubectl -n $(K8S_NS) delete pod k6 --ignore-not-found >/dev/null; exit $$status
+# Simulates a 60 s slow startup on a rolling update, then reports restarts.
+k8s-slow-start-test:
+	kubectl -n $(K8S_NS) set env deployment/api STARTUP_DELAY_SECONDS=60
+	kubectl -n $(K8S_NS) rollout status deployment/api --timeout=300s || true
+	kubectl -n $(K8S_NS) get pods -l app.kubernetes.io/name=api -o custom-columns=POD:.metadata.name,READY:.status.containerStatuses[0].ready,RESTARTS:.status.containerStatuses[0].restartCount
+	kubectl -n $(K8S_NS) set env deployment/api STARTUP_DELAY_SECONDS-
+# Payments down for 60 s: api pods must stay Ready (readiness checks only the DB) and never restart.
+k8s-dependency-test:
+	kubectl -n $(K8S_NS) scale deployment/payments --replicas=0
+	sleep 60
+	kubectl -n $(K8S_NS) get pods -l app.kubernetes.io/name=api -o custom-columns=POD:.metadata.name,READY:.status.containerStatuses[0].ready,RESTARTS:.status.containerStatuses[0].restartCount
+	kubectl -n $(K8S_NS) scale deployment/payments --replicas=1
+	kubectl -n $(K8S_NS) rollout status deployment/payments --timeout=120s

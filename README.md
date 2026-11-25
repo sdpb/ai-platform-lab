@@ -46,6 +46,14 @@ make k8s-deploy ENV=production
 make k8s-down                # deletes the whole cluster
 ```
 
+Runtime checks (Week 3), each against the selected `ENV`:
+
+```sh
+make k8s-shutdown-test       # k6 sends 20 orders/s in-cluster while every api pod is replaced; fails on any error
+make k8s-slow-start-test     # rolls out with a 60 s startup delay; pods must become ready with 0 restarts
+make k8s-dependency-test     # payments down for 60 s; api pods must stay ready with 0 restarts
+```
+
 The `orderlab-secrets` Secret comes from your local `.env` (run `lab.py init` first) and is never committed. The API runs migrations in an init container; the PostgreSQL advisory lock keeps concurrent replicas safe.
 
 ## Create an order

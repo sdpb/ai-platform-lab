@@ -14,6 +14,11 @@ metadata:
   name: api
 spec:
   replicas: 2
+  # Add the new pod before removing an old one: capacity never drops during a rollout.
+  strategy:
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
   selector:
     matchLabels:
       app.kubernetes.io/name: api
@@ -28,6 +33,17 @@ spec:
         runAsGroup: 10001
         seccompProfile:
           type: RuntimeDefault
+      # preStop drain (10 s) + uvicorn --timeout-graceful-shutdown (20 s) must fit inside this.
+      terminationGracePeriodSeconds: 40
+      # One replica per node when possible, so losing a node does not take the whole API down.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: api
+          matchLabelKeys: [pod-template-hash] # count only this revision, not pods a rollout is replacing
       # Migrations are idempotent and serialized by a PostgreSQL advisory lock,
       # so every replica can run them safely before it starts.
       initContainers:
@@ -74,6 +90,15 @@ spec:
               value: "0.4"
             - name: DEPENDENCY_ATTEMPTS
               value: "3"
+          # Startup gets up to 180 s (36 x 5 s); liveness and readiness only begin after it passes,
+          # so a slow start is never mistaken for a hung process.
+          startupProbe:
+            httpGet:
+              path: /health/live
+              port: 8000
+            periodSeconds: 5
+            failureThreshold: 36
+          # Readiness checks the database only: a payment outage must not empty the Service.
           readinessProbe:
             httpGet:
               path: /health/ready
@@ -84,6 +109,11 @@ spec:
               path: /health/live
               port: 8000
             periodSeconds: 10
+          # Keep serving while kube-proxy removes this pod from the Service; then SIGTERM drains in-flight work.
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: 10
           resources:
             requests:
               cpu: 100m

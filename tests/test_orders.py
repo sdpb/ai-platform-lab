@@ -146,6 +146,7 @@ async def test_liveness_independent_of_readiness_and_dependency(client):
     await faults(client, API, not_ready=True)
     await faults(client, STUB, fail_next=100)
     assert (await client.get(API + "/health/live")).status_code == 200
+    assert (await client.get(STUB + "/health/live")).status_code == 200
     assert (await client.get(API + "/health/ready")).status_code == 503
     await faults(client, API)
     assert (await client.get(API + "/health/ready")).status_code == 200

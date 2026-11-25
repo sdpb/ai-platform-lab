@@ -28,10 +28,11 @@ spec:
         runAsGroup: 10001
         seccompProfile:
           type: RuntimeDefault
+      terminationGracePeriodSeconds: 40
       containers:
         - name: payments
           image: orderlab
-          command: [uvicorn, "orderlab.payments:app", --host, "0.0.0.0", --port, "8000", --workers, "1", --no-access-log]
+          command: [uvicorn, "orderlab.payments:app", --host, "0.0.0.0", --port, "8000", --workers, "1", --timeout-graceful-shutdown, "20", --no-access-log]
           ports:
             - containerPort: 8000
           env:
@@ -52,10 +53,15 @@ spec:
               path: /health/ready
               port: 8000
             periodSeconds: 5
-          livenessProbe: # the stub has no /health/live yet; stage 2 adds one
-            tcpSocket:
+          livenessProbe:
+            httpGet:
+              path: /health/live
               port: 8000
             periodSeconds: 10
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: 10
           resources:
             requests:
               cpu: 100m

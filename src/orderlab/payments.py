@@ -34,6 +34,11 @@ class Charge(BaseModel):
     amount_cents: int = Field(ge=0, le=1_000_000_000)
 
 
+@app.get("/health/live")
+async def live():
+    return {"status": "alive"}
+
+
 @app.get("/health/ready")
 async def ready(request: Request):
     async with request.app.state.pool.connection() as conn:
