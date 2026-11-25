@@ -1,0 +1,12 @@
+# Fixed: no CPU limit (the request, sized from the measured load, guarantees the share; idle CPU stays usable),
+# memory request = limit sized from the measured steady state.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources: [../../base]
+patches:
+  - target: {kind: Deployment, name: app}
+    patch: |
+      - {op: replace, path: /spec/template/spec/containers/0/args, value: ["fixed:app"]}
+      - op: add
+        path: /spec/template/spec/containers/0/resources
+        value: {requests: {cpu: 500m, memory: 192Mi}, limits: {memory: 192Mi}}
