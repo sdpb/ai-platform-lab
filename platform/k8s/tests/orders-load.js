@@ -7,12 +7,14 @@ export const options = {
   scenarios: {
     orders: {
       executor: 'constant-arrival-rate',
-      rate: 20,
+      rate: Number(__ENV.RATE || 20),
       timeUnit: '1s',
       duration: __ENV.DURATION || '60s',
       preAllocatedVUs: 20,
+      maxVUs: 400, // enough to keep the arrival rate when latency climbs; dropped_iterations shows when it is not
     },
   },
+  summaryTrendStats: ['avg', 'p(50)', 'p(95)', 'p(99)', 'max'],
   // The Week 3 metric: zero failed requests while a replica is terminated.
   thresholds: { http_req_failed: ['rate==0'] },
 };

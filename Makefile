@@ -83,3 +83,7 @@ k8s-dependency-test:
 	kubectl -n $(K8S_NS) get pods -l app.kubernetes.io/name=api -o custom-columns=POD:.metadata.name,READY:.status.containerStatuses[0].ready,RESTARTS:.status.containerStatuses[0].restartCount
 	kubectl -n $(K8S_NS) scale deployment/payments --replicas=1
 	kubectl -n $(K8S_NS) rollout status deployment/payments --timeout=120s
+
+.PHONY: k8s-capacity
+k8s-capacity:
+	platform/k8s/tests/capacity.sh $(K8S_NS) 25 50 75 100 150
