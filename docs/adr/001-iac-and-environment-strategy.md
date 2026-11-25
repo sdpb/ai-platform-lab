@@ -10,7 +10,7 @@ Status: accepted (Week 2)
 
 ### 1. Bootstrap first, with local admin
 
-`platform/terraform/bootstrap/` creates the state bucket (versioned, KMS-encrypted, public access blocked) and a DynamoDB lock table, using **local state** and an admin login. That login is also used for the first apply of `shared`, `staging` and `production`. After that, changes go through CI (section 6).
+`platform/terraform/bootstrap/` creates the state bucket (versioned, KMS-encrypted, public access blocked), using **local state** and an admin login. That login is also used for the first apply of `shared`, `staging` and `production`. After that, changes go through CI (section 6).
 
 The bucket uses `force_destroy = true` and no `prevent_destroy`, and the secrets use `recovery_window_in_days = 0`. That is deliberate: the account is rebuilt often. A real production account would flip all three.
 
@@ -30,7 +30,7 @@ A lock or a broken apply in staging cannot touch production. Staging and product
 
 ### 3. Native S3 locking
 
-`use_lockfile = true` on every backend (Terraform ≥ 1.10). The DynamoDB table stays available for older tooling but is not configured by default.
+`use_lockfile = true` on every backend (Terraform ≥ 1.10). No DynamoDB table: DynamoDB-based locking is deprecated in the S3 backend.
 
 ### 4. Secrets never in state
 

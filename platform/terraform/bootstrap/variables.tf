@@ -14,12 +14,6 @@ variable "state_bucket_name" {
   }
 }
 
-variable "dynamodb_table_name" {
-  description = "Name of the DynamoDB table used for Terraform state locking (optional on TF 1.10+ with native S3 locking, but provided for dual-compatibility)."
-  type        = string
-  default     = "orderlab-terraform-state-lock"
-}
-
 variable "tags" {
   description = "Common tags applied to all bootstrap resources."
   type        = map(string)

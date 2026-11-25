@@ -4,7 +4,7 @@ Base AWS infrastructure for OrderLab: remote state, ECR, GitHub OIDC roles, Secr
 
 ```
 platform/terraform/
-├── bootstrap/          # State bucket (S3, KMS, versioning) + DynamoDB lock table. Local state.
+├── bootstrap/          # State bucket (S3, KMS, versioning). Local state.
 ├── modules/
 │   ├── ecr/            # Immutable tags, scan on push, lifecycle rules
 │   ├── iam/            # GitHub OIDC provider, CI build role, CD deploy role, runtime role
