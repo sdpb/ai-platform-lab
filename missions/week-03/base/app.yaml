@@ -1,0 +1,39 @@
+# The app reuses the orderlab image for its Python dependencies; the code comes from a ConfigMap.
+apiVersion: v1
+kind: Service
+metadata:
+  name: app
+spec:
+  selector: {app: hunt}
+  ports: [{port: 8000}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: hunt}
+  template:
+    metadata:
+      labels: {app: hunt}
+    spec:
+      securityContext: {runAsNonRoot: true, runAsUser: 10001, seccompProfile: {type: RuntimeDefault}}
+      containers:
+        - name: app
+          image: orderlab:local
+          imagePullPolicy: Never
+          command: [uvicorn, --app-dir, /mission, --host, 0.0.0.0, --port, "8000", --no-access-log]
+          args: [MODULE] # set by the overlay
+          env:
+            - {name: PGHOST, value: postgres}
+            - {name: PGUSER, value: hunt}
+            - name: PGPASSWORD
+              valueFrom: {secretKeyRef: {name: hunt-db, key: password}}
+          readinessProbe:
+            httpGet: {path: /use, port: 8000}
+            periodSeconds: 5
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+          volumeMounts: [{name: code, mountPath: /mission}]
+      volumes: [{name: code, configMap: {name: hunt-code}}]

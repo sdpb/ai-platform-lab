@@ -1,0 +1,35 @@
+# Throwaway database for the mission (emptyDir: data is gone when the pod goes).
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+spec:
+  selector: {app: postgres}
+  ports: [{port: 5432}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+spec:
+  selector:
+    matchLabels: {app: postgres}
+  template:
+    metadata:
+      labels: {app: postgres}
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:17-alpine@sha256:18cfe3ef5e6815560c98237d6216d1e5119702fb0f3894c8785dd58b8bbe5d73
+          env:
+            - {name: POSTGRES_USER, value: hunt}
+            - name: POSTGRES_PASSWORD
+              valueFrom: {secretKeyRef: {name: hunt-db, key: password}}
+          readinessProbe:
+            exec: {command: [pg_isready, -U, hunt]}
+            periodSeconds: 2
+          resources:
+            requests: {cpu: 250m, memory: 256Mi}
+            limits: {memory: 256Mi}
+          volumeMounts: [{name: data, mountPath: /var/lib/postgresql/data}]
+      volumes: [{name: data, emptyDir: {}}]
