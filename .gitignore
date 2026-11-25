@@ -16,3 +16,4 @@ evidence/*
 skills-lock.json
 localdocs/
 tfplan
+.deploy.*

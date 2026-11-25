@@ -122,57 +122,20 @@ jobs:
 
   deploy-staging:
     needs: build-and-push
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, kind]
     environment: staging
     concurrency: staging
-    permissions:
-      contents: read
-      id-token: write     # Required for OIDC
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Configure AWS credentials for Deploy
-        uses: aws-actions/configure-aws-credentials@v6
-        with:
-          role-to-assume: ${{ secrets.AWS_DEPLOY_OIDC_ROLE_ARN }}
-          aws-region: ${{ vars.AWS_REGION }}
-
-      - name: Login to Amazon ECR
-        id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v2
-
-      - name: Verify build provenance and SBOM attestation
-        env:
-          GH_TOKEN: ${{ github.token }}
-          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
-        run: |
-          gh attestation verify oci://$ECR_REGISTRY/$ECR_REPOSITORY@${{ needs.build-and-push.outputs.image-digest }} -R ${{ github.repository }}
-          gh attestation verify oci://$ECR_REGISTRY/$ECR_REPOSITORY@${{ needs.build-and-push.outputs.image-digest }} -R ${{ github.repository }} --predicate-type https://cyclonedx.org/bom
-
-      - name: Initialize environment
-        run: python3 scripts/lab.py init
-
-      - name: Deploy to Staging
-        env:
-          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
-        run: |
-          echo "Missing step for deployment in ${GITHUB_ENV}"
-          # Pull the image so `scripts/release.py` can inspect its ID locally
-          # docker pull $ECR_REGISTRY/$ECR_REPOSITORY@${{ needs.build-and-push.outputs.image-digest }}
-          # python3 scripts/release.py --candidate $ECR_REGISTRY/$ECR_REPOSITORY@${{ needs.build-and-push.outputs.image-digest }} --baseline evidence/baseline.json
-
-  deploy-production:
-    needs: [build-and-push, deploy-staging]
-    runs-on: ubuntu-latest
-    environment: production
-    concurrency: production
+    timeout-minutes: 30
     permissions:
       contents: read
       id-token: write
+    env:
+      ENV: staging
     steps:
       - uses: actions/checkout@v7
+
+      - name: Ensure the kind cluster is ready
+        run: make k8s-cluster
 
       - name: Configure AWS credentials for Deploy
         uses: aws-actions/configure-aws-credentials@v6
@@ -193,14 +156,69 @@ jobs:
           gh attestation verify oci://$ECR_REGISTRY/$ECR_REPOSITORY@${{ needs.build-and-push.outputs.image-digest }} -R ${{ github.repository }}
           gh attestation verify oci://$ECR_REGISTRY/$ECR_REPOSITORY@${{ needs.build-and-push.outputs.image-digest }} -R ${{ github.repository }} --predicate-type https://cyclonedx.org/bom
 
-      - name: Initialize environment
-        run: python3 scripts/lab.py init
-
-      - name: Deploy to Production
+      - name: Deploy the attested image under the rollout gate
         env:
+          SECRET_ID: ${{ env.ENV }}/orderlab-secrets
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
         run: |
-          echo "Missing step for deployment in ${GITHUB_ENV}"
-          #  docker pull $ECR_REGISTRY/$ECR_REPOSITORY@${{ needs.build-and-push.outputs.image-digest }}
-          #  python3 scripts/release.py --candidate $ECR_REGISTRY/$ECR_REPOSITORY@${{ needs.build-and-push.outputs.image-digest }} --baseline evidence/baseline.json
+          set -euo pipefail
+          image="$ECR_REGISTRY/$ECR_REPOSITORY@${{ needs.build-and-push.outputs.image-digest }}"
+          ready=$(kubectl --context kind-orderlab -n "orderlab-$ENV" get deployment api -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo 0)
+          if [ "${ready:-0}" -gt 0 ]; then
+            WAIT=0 scripts/rollout-gate.sh "orderlab-$ENV" scripts/kind-deploy.sh "$ENV" "$image"
+          else
+            scripts/kind-deploy.sh "$ENV" "$image"
+          fi
+
+  deploy-production:
+    needs: [build-and-push, deploy-staging]
+    runs-on: [self-hosted, kind]
+    environment: production
+    concurrency: production
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      ENV: production
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Ensure the kind cluster is ready
+        run: make k8s-cluster
+
+      - name: Configure AWS credentials for Deploy
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_OIDC_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Verify build provenance and SBOM attestation
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+        run: |
+          gh attestation verify oci://$ECR_REGISTRY/$ECR_REPOSITORY@${{ needs.build-and-push.outputs.image-digest }} -R ${{ github.repository }}
+          gh attestation verify oci://$ECR_REGISTRY/$ECR_REPOSITORY@${{ needs.build-and-push.outputs.image-digest }} -R ${{ github.repository }} --predicate-type https://cyclonedx.org/bom
+
+      - name: Deploy the staging-tested image under the rollout gate
+        env:
+          SECRET_ID: ${{ env.ENV }}/orderlab-secrets
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+        run: |
+          set -euo pipefail
+          image="$ECR_REGISTRY/$ECR_REPOSITORY@${{ needs.build-and-push.outputs.image-digest }}"
+          ready=$(kubectl --context kind-orderlab -n "orderlab-$ENV" get deployment api -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo 0)
+          if [ "${ready:-0}" -gt 0 ]; then
+            WAIT=0 scripts/rollout-gate.sh "orderlab-$ENV" scripts/kind-deploy.sh "$ENV" "$image"
+          else
+            scripts/kind-deploy.sh "$ENV" "$image"
+          fi
+          make k8s-smoke ENV="$ENV"

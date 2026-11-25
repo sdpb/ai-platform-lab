@@ -60,6 +60,16 @@ Capacity and autoscaling (Week 3):
 make k8s-capacity            # capacity.sh sweeps 25-150 req/s through k6; compares before/after HPA
 ```
 
+Rollout gate (Week 4):
+
+```sh
+make k8s-rollout-gate        # healthy deploy, then a deliberately failing deploy with automatic rollback
+```
+
+`scripts/rollout-gate.sh` measures a baseline and runs k6 during deployment. It stops and rolls back when errors reach 1% or p95 rises more than 20% above baseline. First deployment goes directly to the cluster; updates run through the gate. The release workflow uses the same attested image digest for staging and production.
+
+The release deploy jobs use a self-hosted runner beside the kind cluster. Register it with only the `kind` label and start it manually for releases rather than as a service. In this public repository, require approval for fork workflows and keep release jobs behind staging and production environment protections; PR checks stay on GitHub-hosted runners.
+
 The `orderlab-secrets` Secret comes from your local `.env` (run `lab.py init` first) and is never committed. The API runs migrations in an init container; the PostgreSQL advisory lock keeps concurrent replicas safe.
 
 ## Create an order

@@ -96,3 +96,7 @@ k8s-dependency-test:
 .PHONY: k8s-capacity
 k8s-capacity:
 	platform/k8s/tests/capacity.sh $(K8S_NS) 25 50 75 100 150
+
+.PHONY: k8s-rollout-gate
+k8s-rollout-gate:
+	scripts/rollout-gate-demo.sh $(K8S_NS)
