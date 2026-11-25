@@ -7,6 +7,7 @@ resources:
   - postgres.yaml
   - payments.yaml
   - api.yaml
+  - hpa.yaml
   - pdb.yaml
   - limits.yaml
 

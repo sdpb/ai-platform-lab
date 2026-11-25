@@ -31,9 +31,12 @@ tf-test:
 # Local kind cluster (Week 3). ENV=staging|production picks the overlay/namespace.
 ENV ?= staging
 K8S_NS := orderlab-$(ENV)
+KUBECTL := kubectl --context kind-orderlab
 .PHONY: k8s-cluster k8s-image k8s-secret k8s-deploy k8s-smoke k8s-down
 k8s-cluster:
 	kind get clusters | grep -qx orderlab || kind create cluster --config platform/k8s/kind.yaml
+	$(KUBECTL) apply --server-side -k platform/k8s/cluster
+	$(KUBECTL) -n kube-system rollout status deployment/metrics-server --timeout=120s
 k8s-image: k8s-cluster
 	docker build -t orderlab:local .
 	kind load docker-image orderlab:local --name orderlab

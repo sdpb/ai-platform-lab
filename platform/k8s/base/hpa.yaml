@@ -1,0 +1,32 @@
+# HPA controls the API replica count from its minimum.
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: api
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: api
+  minReplicas: 2 # keeps one replica per worker and the PDB satisfiable
+  maxReplicas: 6 # the namespace quota and the database pool cap it before anything else (ADR-002)
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70 # percent of the CPU request: requests must reflect real usage
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 0
+      policies:
+        - type: Percent
+          value: 100 # at most double every 15 s
+          periodSeconds: 15
+    scaleDown:
+      stabilizationWindowSeconds: 300 # the default; avoids flapping when load dips briefly
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 60
