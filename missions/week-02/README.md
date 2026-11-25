@@ -42,10 +42,15 @@ Trade-off: Terraform can't diff a value it doesn't store, so rotation = bump `*_
 cd ../03-drift
 terraform init && terraform apply -auto-approve
 aws ssm put-parameter --name /lab-w2/drift/managed --type String --value "hacked-by-hand" --overwrite
+terraform plan -refresh-only                           # detect: shows what changed outside Terraform, changes nothing
 terraform plan -detailed-exitcode ; echo "exit=$?"     # exit 2, shows value change
 terraform apply -auto-approve                          # restores code intent
 terraform plan -detailed-exitcode ; echo "exit=$?"     # exit 0
 ```
+
+Restore is one of three answers to drift. The others: adopt (step 5), or accept it into state only
+with `terraform apply -refresh-only`, which records reality without touching infrastructure; the next
+normal plan then shows the config still disagrees, so this only fits when you will update the code next.
 
 ## 5. Drift: Adopt
 
