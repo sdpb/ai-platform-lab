@@ -54,6 +54,12 @@ make k8s-slow-start-test     # rolls out with a 60 s startup delay; pods must be
 make k8s-dependency-test     # payments down for 60 s; api pods must stay ready with 0 restarts
 ```
 
+Capacity and autoscaling (Week 3):
+
+```sh
+make k8s-capacity            # capacity.sh sweeps 25-150 req/s through k6; compares before/after HPA
+```
+
 The `orderlab-secrets` Secret comes from your local `.env` (run `lab.py init` first) and is never committed. The API runs migrations in an init container; the PostgreSQL advisory lock keeps concurrent replicas safe.
 
 ## Create an order
@@ -179,7 +185,7 @@ AWS access uses GitHub OIDC only; there are no long-lived keys. The deploy steps
 
 ## Docs
 
-- [Decision records](docs/adr/): [ADR-000](docs/adr/000-release-strategy.md) release path, [ADR-001](docs/adr/001-iac-and-environment-strategy.md) IaC and environments.
+- [Decision records](docs/adr/): [ADR-000](docs/adr/000-release-strategy.md) release path, [ADR-001](docs/adr/001-iac-and-environment-strategy.md) IaC and environments. [ADR-002](docs/adr/002-runtime-and-capacity.md) runtime and capacity.
 - [Runbook](docs/runbook.md): diagnosis, recovery, and escalation.
 - [Architecture and limits](docs/architecture.md): transaction boundaries and operational trade-offs.
 - [Starter material](docs/starter/): the original 4-week course guide, scope and verification report, kept for reference.
