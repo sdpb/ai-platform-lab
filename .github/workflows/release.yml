@@ -147,8 +147,8 @@ jobs:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
         run: |
-          gh attestation verify oci://$ECR_REGISTRY/$ECR_REPOSITORY@${{ needs.build-and-push.outputs.image-digest }} -o ${{ github.repository_owner }}
-          gh attestation verify oci://$ECR_REGISTRY/$ECR_REPOSITORY@${{ needs.build-and-push.outputs.image-digest }} -o ${{ github.repository_owner }} --predicate-type https://cyclonedx.org/bom
+          gh attestation verify oci://$ECR_REGISTRY/$ECR_REPOSITORY@${{ needs.build-and-push.outputs.image-digest }} -R ${{ github.repository }}
+          gh attestation verify oci://$ECR_REGISTRY/$ECR_REPOSITORY@${{ needs.build-and-push.outputs.image-digest }} -R ${{ github.repository }} --predicate-type https://cyclonedx.org/bom
 
       - name: Initialize environment
         run: python3 scripts/lab.py init
@@ -190,8 +190,8 @@ jobs:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
         run: |
-          gh attestation verify oci://$ECR_REGISTRY/$ECR_REPOSITORY@${{ needs.build-and-push.outputs.image-digest }} -o ${{ github.repository_owner }}
-          gh attestation verify oci://$ECR_REGISTRY/$ECR_REPOSITORY@${{ needs.build-and-push.outputs.image-digest }} -o ${{ github.repository_owner }} --predicate-type https://cyclonedx.org/bom
+          gh attestation verify oci://$ECR_REGISTRY/$ECR_REPOSITORY@${{ needs.build-and-push.outputs.image-digest }} -R ${{ github.repository }}
+          gh attestation verify oci://$ECR_REGISTRY/$ECR_REPOSITORY@${{ needs.build-and-push.outputs.image-digest }} -R ${{ github.repository }} --predicate-type https://cyclonedx.org/bom
 
       - name: Initialize environment
         run: python3 scripts/lab.py init
