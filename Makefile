@@ -32,6 +32,8 @@ tf-test:
 ENV ?= staging
 K8S_NS := orderlab-$(ENV)
 KUBECTL := kubectl --context kind-orderlab
+API_RESTARTS = $(KUBECTL) -n $(K8S_NS) get pods -l app.kubernetes.io/name=api -o custom-columns=POD:.metadata.name,READY:.status.containerStatuses[0].ready,RESTARTS:.status.containerStatuses[0].restartCount
+NO_RESTARTS = test "$$($(KUBECTL) -n $(K8S_NS) get pods -l app.kubernetes.io/name=api -o jsonpath='{.items[*].status.containerStatuses[0].restartCount}' | tr ' ' '\n' | awk '{s+=$$1} END {print s+0}')" = 0
 .PHONY: k8s-cluster k8s-image k8s-secret k8s-deploy k8s-smoke k8s-down
 k8s-cluster:
 	kind get clusters | grep -qx orderlab || kind create cluster --config platform/k8s/kind.yaml
@@ -63,26 +65,33 @@ k8s-down:
 K6_IMAGE := grafana/k6:2.3.0
 .PHONY: k8s-shutdown-test k8s-slow-start-test k8s-dependency-test
 k8s-shutdown-test:
-	@kubectl -n $(K8S_NS) delete pod k6 --ignore-not-found >/dev/null
-	@kubectl -n $(K8S_NS) run k6 -i --restart=Never --image=$(K6_IMAGE) --env=BASE_URL=http://api:8000 --env=DURATION=90s \
+	@$(KUBECTL) -n $(K8S_NS) delete pod k6 --ignore-not-found >/dev/null
+	@$(KUBECTL) -n $(K8S_NS) run k6 -i --restart=Never --image=$(K6_IMAGE) --env=BASE_URL=http://api:8000 --env=DURATION=180s \
 		-- run --quiet - < platform/k8s/tests/orders-load.js & k6=$$!; \
-	for i in $$(seq 120); do kubectl -n $(K8S_NS) get pod k6 2>/dev/null | grep -q Running && break; sleep 1; done; \
-	kubectl -n $(K8S_NS) get pod k6 2>/dev/null | grep -q Running || { kill $$k6 2>/dev/null; echo 'k6 did not start'; exit 1; }; sleep 10; \
-	echo ">>> replacing every api pod under load"; kubectl -n $(K8S_NS) rollout restart deployment/api; \
-	wait $$k6; status=$$?; kubectl -n $(K8S_NS) delete pod k6 --ignore-not-found >/dev/null; exit $$status
+	for i in $$(seq 120); do $(KUBECTL) -n $(K8S_NS) get pod k6 2>/dev/null | grep -q Running && break; sleep 1; done; \
+	$(KUBECTL) -n $(K8S_NS) get pod k6 2>/dev/null | grep -q Running || { kill $$k6 2>/dev/null; echo 'k6 did not start'; exit 1; }; sleep 10; \
+	echo ">>> replacing every api pod under load"; $(KUBECTL) -n $(K8S_NS) rollout restart deployment/api; \
+	wait $$k6; status=$$?; $(KUBECTL) -n $(K8S_NS) delete pod k6 --ignore-not-found >/dev/null; \
+	$(KUBECTL) -n $(K8S_NS) rollout status deployment/api --timeout=300s || status=1; \
+	$(API_RESTARTS) || status=1; \
+	$(NO_RESTARTS) || { echo 'FAIL: an api container restarted during the shutdown test'; status=1; }; \
+	exit $$status
 # Simulates a 60 s slow startup on a rolling update, then reports restarts.
 k8s-slow-start-test:
-	kubectl -n $(K8S_NS) set env deployment/api STARTUP_DELAY_SECONDS=60
-	kubectl -n $(K8S_NS) rollout status deployment/api --timeout=300s || true
-	kubectl -n $(K8S_NS) get pods -l app.kubernetes.io/name=api -o custom-columns=POD:.metadata.name,READY:.status.containerStatuses[0].ready,RESTARTS:.status.containerStatuses[0].restartCount
-	kubectl -n $(K8S_NS) set env deployment/api STARTUP_DELAY_SECONDS-
+	$(KUBECTL) -n $(K8S_NS) set env deployment/api STARTUP_DELAY_SECONDS=60
+	$(KUBECTL) -n $(K8S_NS) rollout status deployment/api --timeout=300s || true
+	$(API_RESTARTS); $(NO_RESTARTS) || { $(KUBECTL) -n $(K8S_NS) set env deployment/api STARTUP_DELAY_SECONDS-; echo 'FAIL: api restarted during slow start'; exit 1; }
+	$(KUBECTL) -n $(K8S_NS) set env deployment/api STARTUP_DELAY_SECONDS-
+	$(KUBECTL) -n $(K8S_NS) rollout status deployment/api --timeout=300s
 # Payments down for 60 s: api pods must stay Ready (readiness checks only the DB) and never restart.
 k8s-dependency-test:
-	kubectl -n $(K8S_NS) scale deployment/payments --replicas=0
+	$(KUBECTL) -n $(K8S_NS) scale deployment/payments --replicas=0
 	sleep 60
-	kubectl -n $(K8S_NS) get pods -l app.kubernetes.io/name=api -o custom-columns=POD:.metadata.name,READY:.status.containerStatuses[0].ready,RESTARTS:.status.containerStatuses[0].restartCount
-	kubectl -n $(K8S_NS) scale deployment/payments --replicas=1
-	kubectl -n $(K8S_NS) rollout status deployment/payments --timeout=120s
+	$(API_RESTARTS)
+	@$(NO_RESTARTS) && ok=1 || ok=0; \
+	$(KUBECTL) -n $(K8S_NS) scale deployment/payments --replicas=1; \
+	$(KUBECTL) -n $(K8S_NS) rollout status deployment/payments --timeout=120s; \
+	[ $$ok = 1 ] || { echo 'FAIL: api restarted while payments was down'; exit 1; }
 
 .PHONY: k8s-capacity
 k8s-capacity:
