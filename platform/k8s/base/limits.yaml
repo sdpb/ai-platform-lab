@@ -1,0 +1,28 @@
+# Namespace guardrails: defaults for any container that sets no resources, and a cap on the whole
+# namespace so one environment cannot starve the other on the shared kind cluster.
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: defaults
+spec:
+  limits:
+    - type: Container
+      defaultRequest:
+        cpu: 100m
+        memory: 256Mi
+      default:
+        memory: 256Mi
+      max:
+        memory: 1Gi
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: orderlab
+spec:
+  hard:
+    requests.cpu: "2"
+    requests.memory: 4Gi
+    limits.memory: 4Gi
+    pods: "15"
+    persistentvolumeclaims: "2"

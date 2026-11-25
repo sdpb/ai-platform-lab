@@ -8,6 +8,7 @@ resources:
   - payments.yaml
   - api.yaml
   - pdb.yaml
+  - limits.yaml
 
 labels:
   - pairs:
