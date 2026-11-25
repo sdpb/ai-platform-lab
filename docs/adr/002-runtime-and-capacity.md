@@ -47,6 +47,12 @@ Status: accepted (Week 3)
 | 100 | 6.12 ms / 25.97 ms | 0 | 4 | 5.20 ms / 7.15 ms | 0 |
 | 150 | 98.62 ms / 315.03 ms | 62 | 6 | **6.75 ms / 29.38 ms** | **0** |
 
+### 5. Interaction of requests, target metrics, startup delay, and DB limits under HPA (stretch)
+
+1. **CPU request defines the utilization denominator.** The HPA's `averageUtilization: 70` targets average CPU use at 70% of each API pod's CPU request. With `requests.cpu: 100m`, that corresponds to approximately `70m` CPU per pod. The HPA estimates a desired replica count from the ratio between observed and target utilization, then applies its tolerance, readiness/missing-metric handling, min/max bounds, and scaling behavior. Raising the request without changing the target raises the absolute CPU level needed to trigger scale-up; lowering it makes the HPA more sensitive. Set requests from measured workload use so the percentage has operational meaning.
+
+2. **Startup and readiness make new capacity arrive later than the scale decision.** The API's `startupProbe` allows up to `180 s` (`36` checks at `5 s`) for startup, including the configured `STARTUP_DELAY_SECONDS`; the `readinessProbe` then requires a successful database check before the pod enters Service endpoints. For CPU scaling, Kubernetes sets aside pods that are not yet ready or whose CPU samples predate readiness. It recalculates conservatively: during a proposed scale-up, missing and not-yet-ready pods are treated as using `0%` of the target, which can dampen the scale recommendation. A zero-second scale-up stabilization window removes an intentional hold, but it cannot remove scheduling, image startup, initialization, or probe time. Existing ready pods serve the burst while new pods become usable. Scale-down is deliberately slower: the HPA keeps recommendations for `300 s` and removes at most one pod per `60 s` under this policy. See the Kubernetes [HPA algorithm and pod readiness behavior](https://kubernetes.io/docs/concepts/workloads/autoscaling/horizontal-pod-autoscale/).
+
 ---
 
 ## Consequences
