@@ -1,0 +1,56 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: api-canary-sli
+spec:
+  args:
+    - name: stable-hash
+    - name: latest-hash
+  metrics:
+    - name: canary-error-rate
+      interval: 30s
+      initialDelay: 60s
+      count: 2
+      failureLimit: 1
+      consecutiveErrorLimit: 1
+      provider:
+        prometheus:
+          address: http://prometheus.monitoring.svc.cluster.local:9090
+          query: |
+            (
+              (
+                (sum(rate(orderlab_requests_total{
+                  service="orders-api",route="/orders",method="POST",status!~"2..",
+                  rollouts_pod_template_hash="{{args.latest-hash}}"
+                }[1m])) or vector(0)) /
+                clamp_min((sum(rate(orderlab_requests_total{
+                  service="orders-api",route="/orders",method="POST",
+                  rollouts_pod_template_hash="{{args.latest-hash}}"
+                }[1m])) or vector(0)), 0.001)
+              ) and on() (sum(rate(orderlab_requests_total{
+                service="orders-api",route="/orders",method="POST",
+                rollouts_pod_template_hash="{{args.latest-hash}}"
+              }[1m])) > 0)
+            ) or vector(1)
+      successCondition: result[0] < 0.01
+    - name: canary-p95-regression
+      interval: 30s
+      initialDelay: 60s
+      count: 2
+      failureLimit: 1
+      consecutiveErrorLimit: 1
+      provider:
+        prometheus:
+          address: http://prometheus.monitoring.svc.cluster.local:9090
+          query: |
+            (
+              histogram_quantile(0.95, sum by (le) (rate(orderlab_request_duration_seconds_bucket{
+                service="orders-api",route="/orders",
+                rollouts_pod_template_hash="{{args.latest-hash}}"
+              }[1m]))) /
+              clamp_min(histogram_quantile(0.95, sum by (le) (rate(orderlab_request_duration_seconds_bucket{
+                service="orders-api",route="/orders",
+                rollouts_pod_template_hash="{{args.stable-hash}}"
+              }[1m]))), 0.001)
+            ) or vector(1e9)
+      successCondition: result[0] <= 1.2
