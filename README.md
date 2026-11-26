@@ -72,6 +72,10 @@ The release deploy jobs use a self-hosted runner beside the kind cluster. Regist
 
 The `orderlab-secrets` Secret comes from your local `.env` (run `lab.py init` first) and is never committed. The API runs migrations in an init container; the PostgreSQL advisory lock keeps concurrent replicas safe.
 
+### Expand-and-contract currency migration
+
+The additive `002_expand.sql` migration adds a nullable `currency` column so v1 API pods can continue to read and write during a rolling deploy. Set `SCHEMA_CONTRACT=v2` to accept and persist the optional three-letter currency code; v2 reads older rows with a USD default. Run `003_backfill.sql` to fill USD into rows written by v1, then verify no NULL currency values remain before removing compatibility code in a later change. V1 ignores the new column, so a v1 rollback remains compatible with the expanded schema.
+
 ## Create an order
 
 ```sh
