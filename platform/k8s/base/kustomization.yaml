@@ -10,6 +10,7 @@ resources:
   - hpa.yaml
   - pdb.yaml
   - limits.yaml
+  - analysis-template.yaml
 
 labels:
   - pairs:

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Deploy an attested image digest to the local kind cluster from the release pipeline.
+# Deploy OrderLab to the local kind cluster. Used by `make k8s-deploy` and by the release pipeline.
 #   scripts/kind-deploy.sh <staging|production> [registry/repo@sha256:digest]
 # With an image, the kind nodes pull that exact digest from ECR (no rebuild, no retag).
 # SECRET_ID=<env>/orderlab-secrets reads app secrets from AWS Secrets Manager; otherwise from .env.
@@ -44,6 +44,13 @@ fi
 kc -n "$NS" rollout status statefulset/postgres --timeout=180s
 kc -n "$NS" rollout status deployment/payments --timeout=180s
 if [ "${WAIT:-1}" = "1" ]; then
-  kc -n "$NS" rollout status deployment/api --timeout=300s
-  kc -n "$NS" get deployment api -o jsonpath='deployed {.spec.template.spec.containers[0].image}{"\n"}'
+  if kc -n "$NS" get rollout api >/dev/null 2>&1; then
+    kubectl argo rollouts --context kind-orderlab -n "$NS" status api --timeout=300s
+    # The Rollout is ready before the old Deployment is removed during the one-time migration.
+    kc -n "$NS" delete deployment/api --ignore-not-found
+    kc -n "$NS" get rollout api -o jsonpath='deployed {.spec.template.spec.containers[0].image}{"\n"}'
+  else
+    kc -n "$NS" rollout status deployment/api --timeout=300s
+    kc -n "$NS" get deployment api -o jsonpath='deployed {.spec.template.spec.containers[0].image}{"\n"}'
+  fi
 fi

@@ -5,8 +5,8 @@ metadata:
   name: api
 spec:
   scaleTargetRef:
-    apiVersion: apps/v1
-    kind: Deployment
+    apiVersion: argoproj.io/v1alpha1
+    kind: Rollout
     name: api
   minReplicas: 2 # keeps one replica per worker and the PDB satisfiable
   maxReplicas: 6 # the namespace quota and the database pool cap it before anything else (ADR-002)
