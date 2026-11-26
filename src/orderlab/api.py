@@ -19,8 +19,19 @@ from orderlab.models import APIFaults, OrderRequest
 
 tracer, trace_provider = setup_tracing("orders-api")
 dependency_calls = Counter("orderlab_dependency_attempts_total", "Payment HTTP attempts", ["outcome"])
-ORDER_COLUMNS = "id, customer_id, sku, quantity, unit_price_cents, total_cents, status, payment_id, created_at, updated_at"
-INTERNAL_COLUMNS = ORDER_COLUMNS + ", request_hash"
+BASE_ORDER_COLUMNS = "id, customer_id, sku, quantity, unit_price_cents, total_cents, status, payment_id, created_at, updated_at"
+
+
+def schema_contract():
+    return os.getenv("SCHEMA_CONTRACT", "v2")
+
+
+def order_columns():
+    return BASE_ORDER_COLUMNS + (", currency" if schema_contract() == "v2" else "")
+
+
+def internal_columns():
+    return order_columns() + ", request_hash"
 
 
 @asynccontextmanager
@@ -69,7 +80,7 @@ async def ready(request: Request):
 
 @app.get("/version")
 async def version():
-    return {"version": os.getenv("APP_VERSION", "local"), "schema_contract": "v1"}
+    return {"version": os.getenv("APP_VERSION", "local"), "schema_contract": schema_contract()}
 
 
 @app.get("/metrics", include_in_schema=False)
@@ -138,23 +149,35 @@ async def create_order(payload: OrderRequest, request: Request,
     pool = request.app.state.pool
     # Commit the intent before performing an external side effect. Even if the
     # second transaction rolls back, a subsequent retry uses the same order ID.
+    cols = internal_columns()
     async with pool.connection() as conn:
-        await conn.execute(
-            """INSERT INTO orders(id, idempotency_key, request_hash, customer_id, sku,
-                quantity, unit_price_cents, total_cents, status)
-               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'pending')
-               ON CONFLICT (idempotency_key) DO NOTHING""",
-            (uuid.uuid4(), idempotency_key, payload.fingerprint(), payload.customer_id,
-             payload.sku, payload.quantity, payload.unit_price_cents,
-             payload.quantity * payload.unit_price_cents),
-        )
+        if schema_contract() == "v2":
+            await conn.execute(
+                """INSERT INTO orders(id, idempotency_key, request_hash, customer_id, sku,
+                    quantity, unit_price_cents, total_cents, status, currency)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'pending',%s)
+                   ON CONFLICT (idempotency_key) DO NOTHING""",
+                (uuid.uuid4(), idempotency_key, payload.fingerprint(), payload.customer_id,
+                 payload.sku, payload.quantity, payload.unit_price_cents,
+                 payload.quantity * payload.unit_price_cents, payload.currency),
+            )
+        else:
+            await conn.execute(
+                """INSERT INTO orders(id, idempotency_key, request_hash, customer_id, sku,
+                    quantity, unit_price_cents, total_cents, status)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'pending')
+                   ON CONFLICT (idempotency_key) DO NOTHING""",
+                (uuid.uuid4(), idempotency_key, payload.fingerprint(), payload.customer_id,
+                 payload.sku, payload.quantity, payload.unit_price_cents,
+                 payload.quantity * payload.unit_price_cents),
+            )
     replayed = False
     with tracer.start_as_current_span("orders.confirm"):
         # Per-order row lock serializes concurrent retries. Deliberately bounded
         # synchronous orchestration: pool contention is a lab exercise.
         async with pool.connection() as conn:
             row = await (await conn.execute(
-                f"SELECT {INTERNAL_COLUMNS} FROM orders WHERE idempotency_key=%s FOR UPDATE", (idempotency_key,)
+                f"SELECT {cols} FROM orders WHERE idempotency_key=%s FOR UPDATE", (idempotency_key,)
             )).fetchone()
             if row["request_hash"] != payload.fingerprint():
                 raise HTTPException(409, "Idempotency-Key already used with a different payload")
@@ -164,7 +187,7 @@ async def create_order(payload: OrderRequest, request: Request,
                 payment_id = await charge(request, row)
                 row = await (await conn.execute(
                     f"""UPDATE orders SET status=%s, payment_id=%s, updated_at=clock_timestamp()
-                       WHERE id=%s RETURNING {INTERNAL_COLUMNS}""",
+                       WHERE id=%s RETURNING {cols}""",
                     ("confirmed" if payment_id else "rejected", payment_id, row["id"]),
                 )).fetchone()
             else:
@@ -178,7 +201,11 @@ async def create_order(payload: OrderRequest, request: Request,
 
 
 def public_order(row):
-    return {k: v for k, v in row.items() if k not in ("request_hash", "idempotency_key", "currency")}
+    out = {k: v for k, v in row.items() if k not in ("request_hash", "idempotency_key", "currency")}
+    if schema_contract() == "v2":
+        # Rows inserted by v1 pods before backfill have currency=NULL; normalize on read.
+        out["currency"] = row.get("currency") or "USD"
+    return out
 
 
 @app.get("/orders")
@@ -187,7 +214,7 @@ async def list_orders(request: Request, limit: int = 20):
         raise HTTPException(422, "limit must be between 1 and 100")
     async with request.app.state.pool.connection() as conn:
         rows = await (await conn.execute(
-            f"SELECT {ORDER_COLUMNS} FROM orders ORDER BY created_at DESC, id DESC LIMIT %s", (limit,)
+            f"SELECT {order_columns()} FROM orders ORDER BY created_at DESC, id DESC LIMIT %s", (limit,)
         )).fetchall()
     return {"orders": [public_order(row) for row in rows]}
 
@@ -195,7 +222,7 @@ async def list_orders(request: Request, limit: int = 20):
 @app.get("/orders/{order_id}")
 async def get_order(order_id: uuid.UUID, request: Request):
     async with request.app.state.pool.connection() as conn:
-        row = await (await conn.execute(f"SELECT {ORDER_COLUMNS} FROM orders WHERE id=%s", (order_id,))).fetchone()
+        row = await (await conn.execute(f"SELECT {order_columns()} FROM orders WHERE id=%s", (order_id,))).fetchone()
     if not row:
         raise HTTPException(404, "Order not found")
     return public_order(row)

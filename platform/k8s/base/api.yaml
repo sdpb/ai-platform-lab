@@ -48,7 +48,7 @@ spec:
       initContainers:
         - name: migrate
           image: orderlab
-          command: [python, scripts/migrate.py]
+          command: [python, scripts/migrate.py, --through, "003"]
           env:
             # Password via libpq's PGPASSWORD: generated passwords may contain URL-breaking characters.
             - name: DATABASE_URL

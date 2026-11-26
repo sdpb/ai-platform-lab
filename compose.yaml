@@ -42,7 +42,7 @@ services:
     mem_limit: 512m
   migrate:
     <<: *app
-    command: [python, scripts/migrate.py]
+    command: [python, scripts/migrate.py, --through, "003"]
     depends_on:
       db: {condition: service_healthy}
   api:

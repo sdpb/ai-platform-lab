@@ -179,6 +179,43 @@ async def test_expanded_schema_backfill_keeps_v1_compatible(client):
         assert conn.execute("SELECT currency FROM orders WHERE id=%s", (order_id,)).fetchone()[0] == "EUR"
 
 
+async def test_v2_currency_persists_and_validates(client):
+    assert (await client.get(API + "/version")).json()["schema_contract"] == "v2"
+    default_order = (await submit(client)).json()
+    assert default_order["currency"] == "USD"
+    eur_order = await submit(client, body={**BODY, "currency": "EUR"})
+    assert eur_order.status_code == 201, eur_order.text
+    assert eur_order.json()["currency"] == "EUR"
+    assert (await client.get(API + "/orders/" + eur_order.json()["id"])).json()["currency"] == "EUR"
+    assert (await submit(client, body={**BODY, "currency": "euro"})).status_code == 422
+
+
+async def test_v1_and_v2_coexist_on_expanded_schema(client, monkeypatch):
+    from orderlab.api import app as order_app
+
+    v2_order = (await submit(client, body={**BODY, "currency": "EUR"})).json()
+    monkeypatch.setenv("SCHEMA_CONTRACT", "v1")
+    async with order_app.router.lifespan_context(order_app):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=order_app), base_url="http://v1-test"
+        ) as v1:
+            assert (await v1.get("/version")).json()["schema_contract"] == "v1"
+            read_eur = await v1.get("/orders/" + v2_order["id"])
+            assert read_eur.status_code == 200
+            assert "currency" not in read_eur.json()
+            v1_created = await v1.post("/orders", json=BODY, headers={"Idempotency-Key": uuid.uuid4().hex})
+            assert v1_created.status_code == 201
+            v1_id = v1_created.json()["id"]
+    monkeypatch.delenv("SCHEMA_CONTRACT", raising=False)
+    # v2 reads a row inserted by v1 (currency IS NULL) with a safe default before backfill runs.
+    v2_read = await client.get(API + "/orders/" + v1_id)
+    assert v2_read.status_code == 200
+    assert v2_read.json()["currency"] == "USD"
+    with psycopg.connect(os.environ["DATABASE_URL"]) as conn:
+        conn.execute(Path("db/migrations/003_backfill.sql").read_text())
+        assert conn.execute("SELECT currency FROM orders WHERE id=%s", (v1_id,)).fetchone()[0] == "USD"
+
+
 async def test_metrics_use_route_templates_not_order_ids(client):
     order = (await submit(client)).json()
     await client.get(API + "/orders/" + order["id"])
