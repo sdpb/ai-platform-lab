@@ -31,29 +31,27 @@ tf-test:
 # Local kind cluster (Week 3). ENV=staging|production picks the overlay/namespace.
 ENV ?= staging
 K8S_NS := orderlab-$(ENV)
+# Never act on whatever kubectl context happens to be current.
 KUBECTL := kubectl --context kind-orderlab
 API_RESTARTS = $(KUBECTL) -n $(K8S_NS) get pods -l app.kubernetes.io/name=api -o custom-columns=POD:.metadata.name,READY:.status.containerStatuses[0].ready,RESTARTS:.status.containerStatuses[0].restartCount
+# Pass criterion of the slow-start and dependency tests: no api container restarted.
 NO_RESTARTS = test "$$($(KUBECTL) -n $(K8S_NS) get pods -l app.kubernetes.io/name=api -o jsonpath='{.items[*].status.containerStatuses[0].restartCount}' | tr ' ' '\n' | awk '{s+=$$1} END {print s+0}')" = 0
-.PHONY: k8s-cluster k8s-image k8s-secret k8s-deploy k8s-smoke k8s-down
+API_RESTART = if $(KUBECTL) -n $(K8S_NS) get rollout api >/dev/null 2>&1; then kubectl argo rollouts --context kind-orderlab -n $(K8S_NS) restart api; else $(KUBECTL) -n $(K8S_NS) rollout restart deployment/api; fi
+API_WAIT = if $(KUBECTL) -n $(K8S_NS) get rollout api >/dev/null 2>&1; then kubectl argo rollouts --context kind-orderlab -n $(K8S_NS) status api --timeout=300s; else $(KUBECTL) -n $(K8S_NS) rollout status deployment/api --timeout=300s; fi
+.PHONY: k8s-cluster k8s-image k8s-deploy k8s-smoke k8s-down
 k8s-cluster:
 	kind get clusters | grep -qx orderlab || kind create cluster --config platform/k8s/kind.yaml
 	$(KUBECTL) apply --server-side -k platform/k8s/cluster
 	$(KUBECTL) -n kube-system rollout status deployment/metrics-server --timeout=120s
+	@if $(KUBECTL) -n argo-rollouts get deployment/argo-rollouts >/dev/null 2>&1; then $(KUBECTL) -n argo-rollouts rollout status deployment/argo-rollouts --timeout=180s; fi
+	@if $(KUBECTL) -n monitoring get deployment/prometheus >/dev/null 2>&1; then $(KUBECTL) -n monitoring rollout status deployment/prometheus --timeout=120s; fi
 k8s-image: k8s-cluster
 	docker build -t orderlab:local .
 	kind load docker-image orderlab:local --name orderlab
-# Secret from the local .env (lab.py init); piped through stdin so values never hit argv.
-k8s-secret: k8s-cluster
-	kubectl create namespace $(K8S_NS) --dry-run=client -o yaml | kubectl apply -f -
-	grep -E '^(POSTGRES_PASSWORD|LAB_ADMIN_TOKEN)=' .env | kubectl -n $(K8S_NS) create secret generic orderlab-secrets \
-		--from-env-file=/dev/stdin --dry-run=client -o yaml | kubectl apply -f -
-k8s-deploy: k8s-image k8s-secret
-	kubectl apply -k platform/k8s/overlays/$(ENV)
-	kubectl -n $(K8S_NS) rollout status statefulset/postgres --timeout=180s
-	kubectl -n $(K8S_NS) rollout status deployment/payments --timeout=180s
-	kubectl -n $(K8S_NS) rollout status deployment/api --timeout=180s
+k8s-deploy: k8s-image
+	scripts/kind-deploy.sh $(ENV)
 k8s-smoke:
-	@kubectl -n $(K8S_NS) port-forward svc/api 18000:8000 >/dev/null & pf=$$!; trap "kill $$pf" EXIT; sleep 2; \
+	@$(KUBECTL) -n $(K8S_NS) port-forward svc/api 18000:8000 >/dev/null & pf=$$!; trap "kill $$pf" EXIT; sleep 2; \
 	curl -fsS localhost:18000/health/ready && echo && \
 	curl -fsS localhost:18000/orders -H 'Content-Type: application/json' -H "Idempotency-Key: smoke-$$(date +%s)" \
 		-d '{"customer_id":"smoke","sku":"widget","quantity":1,"unit_price_cents":100}' && echo
@@ -70,19 +68,23 @@ k8s-shutdown-test:
 		-- run --quiet - < platform/k8s/tests/orders-load.js & k6=$$!; \
 	for i in $$(seq 120); do $(KUBECTL) -n $(K8S_NS) get pod k6 2>/dev/null | grep -q Running && break; sleep 1; done; \
 	$(KUBECTL) -n $(K8S_NS) get pod k6 2>/dev/null | grep -q Running || { kill $$k6 2>/dev/null; echo 'k6 did not start'; exit 1; }; sleep 10; \
-	echo ">>> replacing every api pod under load"; $(KUBECTL) -n $(K8S_NS) rollout restart deployment/api; \
+	echo ">>> replacing every api pod under load"; $(API_RESTART); \
 	wait $$k6; status=$$?; $(KUBECTL) -n $(K8S_NS) delete pod k6 --ignore-not-found >/dev/null; \
-	$(KUBECTL) -n $(K8S_NS) rollout status deployment/api --timeout=300s || status=1; \
+	$(API_WAIT) || status=1; \
 	$(API_RESTARTS) || status=1; \
 	$(NO_RESTARTS) || { echo 'FAIL: an api container restarted during the shutdown test'; status=1; }; \
 	exit $$status
 # Simulates a 60 s slow startup on a rolling update, then reports restarts.
 k8s-slow-start-test:
-	$(KUBECTL) -n $(K8S_NS) set env deployment/api STARTUP_DELAY_SECONDS=60
-	$(KUBECTL) -n $(K8S_NS) rollout status deployment/api --timeout=300s || true
-	$(API_RESTARTS); $(NO_RESTARTS) || { $(KUBECTL) -n $(K8S_NS) set env deployment/api STARTUP_DELAY_SECONDS-; echo 'FAIL: api restarted during slow start'; exit 1; }
-	$(KUBECTL) -n $(K8S_NS) set env deployment/api STARTUP_DELAY_SECONDS-
-	$(KUBECTL) -n $(K8S_NS) rollout status deployment/api --timeout=300s
+	@if $(KUBECTL) -n $(K8S_NS) get rollout api >/dev/null 2>&1; then \
+		platform/k8s/tests/slow-start.sh $(K8S_NS); \
+	else \
+		$(KUBECTL) -n $(K8S_NS) set env deployment/api STARTUP_DELAY_SECONDS=60; \
+		$(KUBECTL) -n $(K8S_NS) rollout status deployment/api --timeout=300s || true; \
+		$(API_RESTARTS); $(NO_RESTARTS) || { $(KUBECTL) -n $(K8S_NS) set env deployment/api STARTUP_DELAY_SECONDS-; echo 'FAIL: api restarted during slow start'; exit 1; }; \
+		$(KUBECTL) -n $(K8S_NS) set env deployment/api STARTUP_DELAY_SECONDS-; \
+		$(KUBECTL) -n $(K8S_NS) rollout status deployment/api --timeout=300s; \
+	fi
 # Payments down for 60 s: api pods must stay Ready (readiness checks only the DB) and never restart.
 k8s-dependency-test:
 	$(KUBECTL) -n $(K8S_NS) scale deployment/payments --replicas=0
@@ -93,10 +95,10 @@ k8s-dependency-test:
 	$(KUBECTL) -n $(K8S_NS) rollout status deployment/payments --timeout=120s; \
 	[ $$ok = 1 ] || { echo 'FAIL: api restarted while payments was down'; exit 1; }
 
-.PHONY: k8s-capacity
+.PHONY: k8s-capacity k8s-rollout-gate k8s-argo-canary-test
 k8s-capacity:
 	platform/k8s/tests/capacity.sh $(K8S_NS) 25 50 75 100 150
-
-.PHONY: k8s-rollout-gate
 k8s-rollout-gate:
 	scripts/rollout-gate-demo.sh $(K8S_NS)
+k8s-argo-canary-test:
+	platform/k8s/tests/argo-canary.sh $(K8S_NS)

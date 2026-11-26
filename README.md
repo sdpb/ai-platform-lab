@@ -37,9 +37,11 @@ Grafana login: `admin`; password: `GRAFANA_PASSWORD` in `.env`. Ports bind to lo
 
 ## Run on Kubernetes (kind)
 
-Needs `kind` and `kubectl`. Manifests live in [platform/k8s](platform/k8s/): a Kustomize base (PostgreSQL, payments stub, orders API) and one overlay per environment, each in its own namespace on the same local cluster.
+Needs Docker, `kind`, `kubectl`, and the [Argo Rollouts v1.10.2 CLI](https://github.com/argoproj/argo-rollouts/releases/tag/v1.10.2). Manifests live in [platform/k8s](platform/k8s/): a Kustomize base (PostgreSQL, payments stub, orders API) and one overlay per environment, each in its own namespace on the same local cluster.
 
 ```sh
+scripts/install-argo-rollouts-cli.sh
+export PATH="$HOME/.local/bin:$PATH"
 make k8s-deploy              # creates the kind cluster if needed, loads orderlab:local, deploys staging
 make k8s-smoke               # readiness + one real order through the payment stub
 make k8s-deploy ENV=production
@@ -63,18 +65,35 @@ make k8s-capacity            # capacity.sh sweeps 25-150 req/s through k6; compa
 Rollout gate (Week 4):
 
 ```sh
-make k8s-rollout-gate        # healthy deploy, then a deliberately failing deploy with automatic rollback
+make k8s-rollout-gate        # demonstrates healthy then failed rollout with automatic abort and rollback
+make k8s-argo-canary-test     # promotes a healthy canary, then checks error and latency aborts
 ```
 
-`scripts/rollout-gate.sh` measures a baseline and runs k6 during deployment. It stops and rolls back when errors reach 1% or p95 rises more than 20% above baseline. First deployment goes directly to the cluster; updates run through the gate. The release workflow uses the same attested image digest for staging and production.
-
-The release deploy jobs use a self-hosted runner beside the kind cluster. Register it with only the `kind` label and start it manually for releases rather than as a service. In this public repository, require approval for fork workflows and keep release jobs behind staging and production environment protections; PR checks stay on GitHub-hosted runners.
+The shell rollout gate (`scripts/rollout-gate.sh`) measures a 30 s baseline, then runs k6 during the deploy. It aborts and rolls back if error rate is ≥1% or p95 rises >20% above baseline. The API canary uses Argo Rollouts and an `AnalysisTemplate` that compares the latest ReplicaSet with the stable ReplicaSet using Prometheus metrics. It aborts when non-2xx canary responses reach 1% of requests or when canary p95 exceeds stable p95 by 20%. Analysis waits 60 s after the canary pause before its first sample, then measures twice at 30 s intervals so slow-start pods can become measurable. Without a traffic router, the 50% and 100% steps use replica ratios, so the actual split is approximate with odd replica counts. See [ADR-003](docs/adr/003-release-strategy-and-resilience.md).
 
 The `orderlab-secrets` Secret comes from your local `.env` (run `lab.py init` first) and is never committed. The API runs migrations in an init container; the PostgreSQL advisory lock keeps concurrent replicas safe.
 
-### Expand-and-contract currency migration
+### Pipeline deploys (self-hosted runner)
 
-The additive `002_expand.sql` migration adds a nullable `currency` column so v1 API pods can continue to read and write during a rolling deploy. Set `SCHEMA_CONTRACT=v2` to accept and persist the optional three-letter currency code; v2 reads older rows with a USD default. Run `003_backfill.sql` to fill USD into rows written by v1, then verify no NULL currency values remain before removing compatibility code in a later change. V1 ignores the new column, so a v1 rollback remains compatible with the expanded schema.
+On every push to `main`, [release.yml](.github/workflows/release.yml) builds one multi-arch image (amd64 and arm64), scans both variants, and attests it. It then deploys that exact digest to this kind cluster through a self-hosted runner on the same machine. The deploy runs [scripts/kind-deploy.sh](scripts/kind-deploy.sh), which gives the nodes a short-lived ECR pull secret, reads `<env>/orderlab-secrets` from AWS Secrets Manager, and pins the digest with a wrapper overlay. The runtime checks above then run as tests, and their output is uploaded as the `evidence-<env>-<sha>` artifact and summarized on the run page.
+
+The repository is public, so the runner is treated as exposed:
+
+1. Register it with only the `kind` label: repo **Settings → Actions → Runners → New self-hosted runner**, then `./config.sh --url https://github.com/sdpb/ai-platform-lab --token <token> --labels kind --unattended`.
+2. Start it with `./run.sh` only while you release, not as a service.
+3. Set **Settings → Actions → General → Approval for running fork pull request workflows** to *Require approval for all external contributors*. A fork PR could otherwise edit a workflow to target `self-hosted`.
+4. Only `release.yml` uses the label: its jobs run on pushes to `main`, behind the `staging` and `production` environments. PR workflows run on GitHub-hosted runners.
+
+The runner needs `aws`, `gh`, `kubectl`, `make`, `python3`, Docker, kind, and the `kind-orderlab` kube context. Install the matching Argo Rollouts CLI once before starting the runner; the controller and CLI are both pinned to v1.10.2:
+
+```sh
+scripts/install-argo-rollouts-cli.sh
+export PATH="$HOME/.local/bin:$PATH"
+kubectl argo rollouts version
+make k8s-cluster
+```
+
+The pipeline checks that the CLI reports v1.10.2 whenever the controller is installed. `make k8s-cluster` installs metrics-server, Argo Rollouts, and the in-cluster Prometheus used by analysis. Deploys reuse a namespace's PostgreSQL volume, so a namespace you first created with `make k8s-deploy` (using the `.env` password) must be deleted once before the pipeline owns it.
 
 ## Create an order
 
@@ -192,14 +211,14 @@ Restore replaces **only** the disposable `restore-db` database, never the main d
 | Workflow | Trigger | What it does |
 |---|---|---|
 | `pr.yml` | Every PR | App tests + Trivy image scan (`test.yml`), Terraform fmt and `terraform test`, Checkov. No cloud access. |
-| `release.yml` | Push to `main` (app changes) | Tests, build once, push to ECR, Trivy scan of the pushed digest, provenance + SBOM attestations, then staging and production deploy jobs (approval required) that verify both attestations. |
+| `release.yml` | Push to `main` (app changes) | Tests, build and scan an amd64/arm64 image, attest the digest and SBOM, then verify and deploy that same digest to staging and production on the self-hosted kind runner with rollout and runtime checks. |
 | `terraform.yml` | Push to `main` (`platform/terraform/**`) or manual | Plan all environments, then apply shared → staging → production, each behind an approval. |
 
-AWS access uses GitHub OIDC only; there are no long-lived keys. The deploy steps are placeholders until the cluster exists (Week 3).
+AWS access uses GitHub OIDC only; there are no long-lived keys. The release workflow deploys the attested image digest to the local kind cluster, gates updates with live traffic, and reruns the runtime checks.
 
 ## Docs
 
-- [Decision records](docs/adr/): [ADR-000](docs/adr/000-release-strategy.md) release path, [ADR-001](docs/adr/001-iac-and-environment-strategy.md) IaC and environments. [ADR-002](docs/adr/002-runtime-and-capacity.md) runtime and capacity.
+- [Decision records](docs/adr/): [ADR-000](docs/adr/000-release-strategy.md) release path, [ADR-001](docs/adr/001-iac-and-environment-strategy.md) IaC and environments, [ADR-002](docs/adr/002-runtime-and-capacity.md) runtime and capacity, [ADR-003](docs/adr/003-release-strategy-and-resilience.md) release strategy and resilience.
 - [Runbook](docs/runbook.md): diagnosis, recovery, and escalation.
 - [Architecture and limits](docs/architecture.md): transaction boundaries and operational trade-offs.
 - [Starter material](docs/starter/): the original 4-week course guide, scope and verification report, kept for reference.

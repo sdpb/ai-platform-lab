@@ -44,6 +44,9 @@ jobs:
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
+      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-buildx-action@v4
+
       # Tags are immutable, so a re-run of the same commit (re-run jobs, flaky later step)
       # must reuse the image already pushed for this SHA instead of pushing it again.
       # batch-get-image is already allowed by the build role; no extra IAM needed.
@@ -77,14 +80,26 @@ jobs:
             echo "digest=$EXISTING_DIGEST" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          docker build -t $IMAGE_URI:$IMAGE_TAG .
-          docker push $IMAGE_URI:$IMAGE_TAG
-          DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' $IMAGE_URI:$IMAGE_TAG | cut -d'@' -f2)
-          echo "digest=$DIGEST" >> $GITHUB_OUTPUT
+          # amd64 for cloud runners, arm64 for the kind cluster on the Apple-silicon runner.
+          # One index digest covers both; provenance comes from the GitHub attestation below.
+          docker buildx build --platform linux/amd64,linux/arm64 --provenance=false \
+            -t $IMAGE_URI:$IMAGE_TAG --metadata-file meta.json --push .
+          echo "digest=$(jq -r '.["containerimage.digest"]' meta.json)" >> "$GITHUB_OUTPUT"
 
       # test.yml scanned a different local build; gate the exact digest we attest and deploy.
       - name: Scan pushed image (Trivy)
         uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ steps.login-ecr.outputs.registry }}/${{ vars.ECR_REPOSITORY }}@${{ steps.build-image.outputs.digest }}
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "1"
+
+      # The scan above pulls the runner's platform (amd64); kind runs the arm64 variant.
+      - name: Scan pushed image, arm64 variant (Trivy)
+        uses: aquasecurity/trivy-action@v0.36.0
+        env:
+          TRIVY_PLATFORM: linux/arm64
         with:
           image-ref: ${{ steps.login-ecr.outputs.registry }}/${{ vars.ECR_REPOSITORY }}@${{ steps.build-image.outputs.digest }}
           severity: CRITICAL,HIGH
@@ -120,6 +135,9 @@ jobs:
           name: sbom-${{ github.sha }}
           path: sbom.cdx.json
 
+  # Deploy jobs run on the self-hosted runner next to the local kind cluster (label `kind`).
+  # Public repo: only this workflow targets that label, it runs only on pushes to main, and each
+  # job is gated by its GitHub environment. PR workflows always use GitHub-hosted runners.
   deploy-staging:
     needs: build-and-push
     runs-on: [self-hosted, kind]
@@ -128,14 +146,21 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: read
-      id-token: write
+      id-token: write     # Required for OIDC
     env:
       ENV: staging
     steps:
       - uses: actions/checkout@v7
 
-      - name: Ensure the kind cluster is ready
+      - name: Ensure kind cluster add-ons are ready
         run: make k8s-cluster
+
+      - name: Verify Argo Rollouts CLI when the controller is installed
+        run: |
+          if kubectl --context kind-orderlab get crd rollouts.argoproj.io >/dev/null 2>&1; then
+            kubectl argo rollouts version | tee /tmp/argo-rollouts-version
+            grep -Fq 'v1.10.2' /tmp/argo-rollouts-version
+          fi
 
       - name: Configure AWS credentials for Deploy
         uses: aws-actions/configure-aws-credentials@v6
@@ -143,40 +168,68 @@ jobs:
           role-to-assume: ${{ secrets.AWS_DEPLOY_OIDC_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
 
-      - name: Login to Amazon ECR
-        id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v2
+      - name: Resolve image
+        id: image
+        run: |
+          REGISTRY=$(aws sts get-caller-identity --query Account --output text).dkr.ecr.${{ vars.AWS_REGION }}.amazonaws.com
+          echo "ref=$REGISTRY/${{ vars.ECR_REPOSITORY }}@${{ needs.build-and-push.outputs.image-digest }}" >> "$GITHUB_OUTPUT"
 
       - name: Verify build provenance and SBOM attestation
         env:
           GH_TOKEN: ${{ github.token }}
-          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
         run: |
-          gh attestation verify oci://$ECR_REGISTRY/$ECR_REPOSITORY@${{ needs.build-and-push.outputs.image-digest }} -R ${{ github.repository }}
-          gh attestation verify oci://$ECR_REGISTRY/$ECR_REPOSITORY@${{ needs.build-and-push.outputs.image-digest }} -R ${{ github.repository }} --predicate-type https://cyclonedx.org/bom
+          gh attestation verify oci://${{ steps.image.outputs.ref }} -R ${{ github.repository }}
+          gh attestation verify oci://${{ steps.image.outputs.ref }} -R ${{ github.repository }} --predicate-type https://cyclonedx.org/bom
 
-      - name: Deploy the attested image under the rollout gate
+      - name: Deploy the attested digest to kind (with rollout gate on updates)
         env:
           SECRET_ID: ${{ env.ENV }}/orderlab-secrets
-          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
         run: |
-          set -euo pipefail
-          image="$ECR_REGISTRY/$ECR_REPOSITORY@${{ needs.build-and-push.outputs.image-digest }}"
-          ready=$(kubectl --context kind-orderlab -n "orderlab-$ENV" get deployment api -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo 0)
-          if [ "${ready:-0}" -gt 0 ]; then
-            WAIT=0 scripts/rollout-gate.sh "orderlab-$ENV" scripts/kind-deploy.sh "$ENV" "$image"
+          mkdir -p evidence/pipeline
+          set -o pipefail
+          if kubectl --context kind-orderlab get crd rollouts.argoproj.io >/dev/null 2>&1; then
+            READY=$(kubectl --context kind-orderlab -n "orderlab-$ENV" get rollout api -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo 0)
           else
-            scripts/kind-deploy.sh "$ENV" "$image"
+            READY=$(kubectl --context kind-orderlab -n "orderlab-$ENV" get deployment api -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo 0)
           fi
+          if [ "${READY:-0}" -gt 0 ]; then
+            WAIT=0 scripts/rollout-gate.sh "orderlab-$ENV" scripts/kind-deploy.sh "$ENV" "${{ steps.image.outputs.ref }}" 2>&1 | tee evidence/pipeline/deploy.txt
+          else
+            scripts/kind-deploy.sh "$ENV" "${{ steps.image.outputs.ref }}" 2>&1 | tee evidence/pipeline/deploy.txt
+          fi
+
+      # The stage 2 runtime guarantees, re-proven on every release against the shipped image.
+      - name: Runtime tests (smoke, shutdown under load, slow start, dependency outage)
+        run: |
+          set -o pipefail
+          for t in smoke shutdown-test slow-start-test dependency-test; do
+            echo "::group::$t"
+            make --no-print-directory k8s-$t ENV="$ENV" 2>&1 | tee "evidence/pipeline/$t.txt"
+            echo "::endgroup::"
+          done
+
+      - name: Evidence summary
+        if: always()
+        run: |
+          {
+            echo "### Staging on kind: ${{ steps.image.outputs.ref }}"
+            echo '```'
+            grep -hE 'deployed|http_req_failed|checks|RESTARTS|^api-|FAIL' evidence/pipeline/*.txt || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: evidence-staging-${{ github.sha }}
+          path: evidence/pipeline/
 
   deploy-production:
     needs: [build-and-push, deploy-staging]
     runs-on: [self-hosted, kind]
     environment: production
     concurrency: production
-    timeout-minutes: 30
+    timeout-minutes: 20
     permissions:
       contents: read
       id-token: write
@@ -185,8 +238,15 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Ensure the kind cluster is ready
+      - name: Ensure kind cluster add-ons are ready
         run: make k8s-cluster
+
+      - name: Verify Argo Rollouts CLI when the controller is installed
+        run: |
+          if kubectl --context kind-orderlab get crd rollouts.argoproj.io >/dev/null 2>&1; then
+            kubectl argo rollouts version | tee /tmp/argo-rollouts-version
+            grep -Fq 'v1.10.2' /tmp/argo-rollouts-version
+          fi
 
       - name: Configure AWS credentials for Deploy
         uses: aws-actions/configure-aws-credentials@v6
@@ -194,31 +254,40 @@ jobs:
           role-to-assume: ${{ secrets.AWS_DEPLOY_OIDC_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
 
-      - name: Login to Amazon ECR
-        id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v2
+      - name: Resolve image
+        id: image
+        run: |
+          REGISTRY=$(aws sts get-caller-identity --query Account --output text).dkr.ecr.${{ vars.AWS_REGION }}.amazonaws.com
+          echo "ref=$REGISTRY/${{ vars.ECR_REPOSITORY }}@${{ needs.build-and-push.outputs.image-digest }}" >> "$GITHUB_OUTPUT"
 
       - name: Verify build provenance and SBOM attestation
         env:
           GH_TOKEN: ${{ github.token }}
-          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
         run: |
-          gh attestation verify oci://$ECR_REGISTRY/$ECR_REPOSITORY@${{ needs.build-and-push.outputs.image-digest }} -R ${{ github.repository }}
-          gh attestation verify oci://$ECR_REGISTRY/$ECR_REPOSITORY@${{ needs.build-and-push.outputs.image-digest }} -R ${{ github.repository }} --predicate-type https://cyclonedx.org/bom
+          gh attestation verify oci://${{ steps.image.outputs.ref }} -R ${{ github.repository }}
+          gh attestation verify oci://${{ steps.image.outputs.ref }} -R ${{ github.repository }} --predicate-type https://cyclonedx.org/bom
 
-      - name: Deploy the staging-tested image under the rollout gate
+      # Same digest staging tested: promoted, never rebuilt.
+      - name: Deploy the attested digest to kind (with rollout gate on updates)
         env:
           SECRET_ID: ${{ env.ENV }}/orderlab-secrets
-          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
         run: |
-          set -euo pipefail
-          image="$ECR_REGISTRY/$ECR_REPOSITORY@${{ needs.build-and-push.outputs.image-digest }}"
-          ready=$(kubectl --context kind-orderlab -n "orderlab-$ENV" get deployment api -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo 0)
-          if [ "${ready:-0}" -gt 0 ]; then
-            WAIT=0 scripts/rollout-gate.sh "orderlab-$ENV" scripts/kind-deploy.sh "$ENV" "$image"
+          mkdir -p evidence/pipeline
+          set -o pipefail
+          if kubectl --context kind-orderlab get crd rollouts.argoproj.io >/dev/null 2>&1; then
+            READY=$(kubectl --context kind-orderlab -n "orderlab-$ENV" get rollout api -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo 0)
           else
-            scripts/kind-deploy.sh "$ENV" "$image"
+            READY=$(kubectl --context kind-orderlab -n "orderlab-$ENV" get deployment api -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo 0)
           fi
-          make k8s-smoke ENV="$ENV"
+          if [ "${READY:-0}" -gt 0 ]; then
+            WAIT=0 scripts/rollout-gate.sh "orderlab-$ENV" scripts/kind-deploy.sh "$ENV" "${{ steps.image.outputs.ref }}" 2>&1 | tee evidence/pipeline/deploy.txt
+          else
+            scripts/kind-deploy.sh "$ENV" "${{ steps.image.outputs.ref }}" 2>&1 | tee evidence/pipeline/deploy.txt
+          fi
+          make --no-print-directory k8s-smoke ENV="$ENV" 2>&1 | tee evidence/pipeline/smoke.txt
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: evidence-production-${{ github.sha }}
+          path: evidence/pipeline/
