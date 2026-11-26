@@ -9,6 +9,7 @@ class OrderRequest(BaseModel):
     sku: str = Field(min_length=1, max_length=80, pattern=r"^[\w-]+$")
     quantity: int = Field(ge=1, le=1000)
     unit_price_cents: int = Field(ge=0, le=1_000_000)
+    currency: str = Field(default="USD", min_length=3, max_length=3, pattern=r"^[A-Z]{3}$")
 
     def fingerprint(self):
         return hashlib.sha256(json.dumps(self.model_dump(), sort_keys=True).encode()).hexdigest()
