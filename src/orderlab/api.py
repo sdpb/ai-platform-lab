@@ -43,7 +43,10 @@ async def lifespan(app):
         base_url=os.getenv("PAYMENTS_URL", "http://payments:8000"),
         timeout=float(os.getenv("DEPENDENCY_TIMEOUT", ".4")),
     )
-    app.state.faults = APIFaults(fail_every=int(os.getenv("INITIAL_FAIL_EVERY", "0")))
+    app.state.faults = APIFaults(
+        fail_every=int(os.getenv("INITIAL_FAIL_EVERY", "0")),
+        latency_ms=int(os.getenv("INITIAL_LATENCY_MS", "0")),
+    )
     app.state.order_calls = 0
     log("started", service="orders-api", version=os.getenv("APP_VERSION", "local"))
     yield
